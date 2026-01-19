@@ -140,12 +140,15 @@ class LEDControllerApp(App):
         Binding("s", "dec_val", "Brilho -"),
         Binding("e", "inc_sat", "Sat +"),
         Binding("f", "dec_sat", "Sat -"),
+        Binding("t", "inc_temp", "Temp + (Frio)"),
+        Binding("g", "dec_temp", "Temp - (Quente)"),
     ]
 
     # Estado HSV reativo
     hue = reactive(0.0)
     sat = reactive(1.0)
     val = reactive(1.0)
+    temp = reactive(0.5) # 0.5 = Neutro
     status_msg = reactive("Iniciando...")
 
     def __init__(self, address=None):
@@ -172,6 +175,7 @@ class LEDControllerApp(App):
             yield ColorBar("MATIZ (H)", id="bar_hue", color="yellow")
             yield ColorBar("SATUR (S)", id="bar_sat", color="cyan")
             yield ColorBar("BRILHO (V)", id="bar_val", color="white")
+            yield ColorBar("TEMP (T/G)", id="bar_temp", color="blue")
             
             yield Label("[b]Meus Atalhos[/b]")
             with Container(id="shortcuts_grid"):
@@ -231,6 +235,18 @@ class LEDControllerApp(App):
     def watch_hue(self): self.update_ui_elements()
     def watch_sat(self): self.update_ui_elements()
     def watch_val(self): self.update_ui_elements()
+    def watch_temp(self, value: float):
+        # Mapear Temperatura para Hue/Sat
+        if value <= 0.5:
+            # Do Branco Quente (0.0) ao Neutro (0.5)
+            self.hue = 0.08 
+            self.sat = 0.8 * (1.0 - (value / 0.5))
+        else:
+            # Do Neutro (0.5) ao Branco Frio (1.0)
+            self.hue = 0.60
+            self.sat = 0.4 * ((value - 0.5) / 0.5)
+        self.update_ui_elements()
+
     def watch_status_msg(self, msg): self.query_one("#status").update(msg)
 
     def update_ui_elements(self):
@@ -245,6 +261,7 @@ class LEDControllerApp(App):
             self.query_one("#bar_hue").value = self.hue
             self.query_one("#bar_sat").value = self.sat
             self.query_one("#bar_val").value = self.val
+            self.query_one("#bar_temp").value = self.temp
             
             if self.led:
                 self.run_worker(self.send_color_to_led(int(r*255), int(g*255), int(b*255)))
@@ -261,7 +278,9 @@ class LEDControllerApp(App):
     def action_dec_sat(self): self.sat = max(0.0, self.sat - 0.1)
     def action_inc_val(self): self.val = min(1.0, self.val + 0.1)
     def action_dec_val(self): self.val = max(0.0, self.val - 0.1)
-    def action_reset(self): self.hue, self.sat, self.val = 0.0, 0.0, 1.0
+    def action_inc_temp(self): self.temp = min(1.0, self.temp + 0.05)
+    def action_dec_temp(self): self.temp = max(0.0, self.temp - 0.05)
+    def action_reset(self): self.hue, self.sat, self.val, self.temp = 0.0, 0.0, 1.0, 0.5
 
     async def on_button_pressed(self, event: Button.Pressed):
         btn_id = event.button.id
