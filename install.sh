@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Verificação de segurança: Não rodar como root
+if [ "$EUID" -eq 0 ]; then
+  echo "Erro: Este script não deve ser executado como root (sudo)."
+  echo "Ele instala arquivos no diretório do usuário atual."
+  exit 1
+fi
+
 INSTALL_DIR="$HOME/.script"
 DESKTOP_FILE="controlador_led.desktop"
 DESKTOP_PATH="$HOME/.local/share/applications/$DESKTOP_FILE"
@@ -9,10 +16,12 @@ echo "=== Instalador Controlador LED (Fedora Silverblue Friendly) ==="
 
 # 1. Garantir que o diretório existe (se rodando de outro lugar)
 if [ "$(pwd)" != "$INSTALL_DIR" ]; then
-    echo "Movendo arquivos para $INSTALL_DIR..."
+    echo "Sincronizando arquivos para $INSTALL_DIR..."
     mkdir -p "$INSTALL_DIR"
-    # Usar cp -a . para copiar tudo, incluindo ocultos (.git) para permitir atualizações
-    cp -a . "$INSTALL_DIR/"
+    # Usar rsync para sincronizar. É mais eficiente e evita erros de permissão 
+    # ao tentar sobrescrever arquivos que já existem e estão com permissões restritas.
+    # Excluímos as pastas do venv (bin, lib, etc) para não dar conflito.
+    rsync -av --exclude='bin' --exclude='lib' --exclude='lib64' --exclude='include' --exclude='share' --exclude='pyvenv.cfg' . "$INSTALL_DIR/"
     cd "$INSTALL_DIR"
 fi
 
@@ -35,9 +44,10 @@ chmod +x controlador_led.py run_led.sh update.sh
 echo "Instalando atalho no menu..."
 mkdir -p "$HOME/.local/share/applications"
 
-# Atualizar o caminho do ícone e exec no arquivo .desktop para garantir caminhos absolutos corretos
-# (O arquivo .desktop já deve estar com caminhos absolutos, mas vamos garantir)
+# Copiar e ajustar o caminho do executável no arquivo .desktop
 cp "$DESKTOP_FILE" "$DESKTOP_PATH"
+# Substituir a linha Exec=... pelo caminho correto dinâmico
+sed -i "s|Exec=.*|Exec=$INSTALL_DIR/run_led.sh|" "$DESKTOP_PATH"
 
 # Atualizar banco de dados de desktop entries
 update-desktop-database "$HOME/.local/share/applications" || true
