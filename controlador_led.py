@@ -38,7 +38,7 @@ class LEDControllerApp(App):
 
     .box {
         height: auto;
-        border: solid green;
+        border: solid yellow;
         padding: 1 2;
         margin: 1;
     }
