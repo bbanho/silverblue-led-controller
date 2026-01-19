@@ -136,11 +136,11 @@ class LEDControllerApp(App):
         Binding("x", "toggle_save", "Modo Salvar"),
     ]
 
-hue = reactive(0.0)
-sat = reactive(1.0)
-val = reactive(1.0)
-status_msg = reactive("Escaneando...")
-save_mode = reactive(False)
+    hue = reactive(0.0)
+    sat = reactive(1.0)
+    val = reactive(1.0)
+    status_msg = reactive("Escaneando...")
+    save_mode = reactive(False)
 
     def __init__(self, address=None):
         super().__init__()
