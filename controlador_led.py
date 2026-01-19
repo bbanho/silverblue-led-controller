@@ -9,11 +9,10 @@ from bleak import BleakScanner
 from led_ble import LEDBLE
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Vertical
 from textual.widgets import Header, Footer, Label, Button, Static
 from textual.reactive import reactive
 from textual.binding import Binding
-from textual.message import Message
 
 # Configurações de diretório
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,53 +21,29 @@ APP_CONFIG_DIR = os.path.join(CONFIG_DIR, "controlador-led")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
 SHORTCUTS_FILE = os.path.join(APP_CONFIG_DIR, "atalhos_v2.json")
 
-class ColorBar(Static):
-    """Componente de barra interativo (Slider via Mouse)."""
+class SimpleBar(Static):
+    """Uma barra de progresso ASCII simples que reage à seleção."""
     value = reactive(0.0)
+    selected = reactive(False)
     
-    class Changed(Message):
-        """Mensagem enviada quando o valor muda via mouse."""
-        def __init__(self, bar_id: str, value: float):
-            self.bar_id = bar_id
-            self.value = value
-            super().__init__()
-
-    def __init__(self, label, initial_value=0.0, color="white", **kwargs):
+    def __init__(self, label, initial_value=0.0, **kwargs):
         super().__init__(**kwargs)
         self.label_text = label
         self.value = initial_value
-        self.bar_color = color
 
     def render(self) -> str:
-        # Cálculo visual da barra
         width = self.size.width - 20
         if width <= 0: width = 20
         filled = int(self.value * width)
-        bar = "█" * filled + "░" * (width - filled)
-        return f"{self.label_text:10} [{self.bar_color}]{bar}[/] {int(self.value * 100):3}%"
-
-    def on_mouse_down(self, event) -> None:
-        self.capture_mouse()
-        self.update_from_mouse(event.x)
-
-    def on_mouse_move(self, event) -> None:
-        if event.button != 0: # Se algum botão estiver pressionado (arrastando)
-            self.update_from_mouse(event.x)
-
-    def on_mouse_up(self, event) -> None:
-        self.release_mouse()
-
-    def update_from_mouse(self, mouse_x):
-        # A barra começa após o label (10 chars) + "[" (1 char) + espaço = ~12
-        bar_start = 12
-        bar_end = self.size.width - 6 # Espaço para o "%" no final
-        total_width = bar_end - bar_start
-        if total_width > 0:
-            rel_x = mouse_x - bar_start
-            new_val = max(0.0, min(1.0, rel_x / total_width))
-            if new_val != self.value:
-                self.value = new_val
-                self.post_message(self.Changed(self.id, new_val))
+        
+        prefix = "> " if self.selected else "  "
+        bar_char = "█" if self.selected else "▒"
+        empty_char = " " if self.selected else "░"
+        
+        bar = bar_char * filled + empty_char * (width - filled)
+        style = "reverse" if self.selected else ""
+        
+        return f"{prefix}{self.label_text:10} [{style}]{bar}[/] {int(self.value * 100):3}%"
 
 class LEDControllerApp(App):
     CSS = """
@@ -77,7 +52,7 @@ class LEDControllerApp(App):
     }
 
     #main_container {
-        width: 65;
+        width: 60;
         height: auto;
         border: thick $primary;
         padding: 1;
@@ -86,35 +61,18 @@ class LEDControllerApp(App):
 
     .preview {
         width: 100%;
-        height: 4;
+        height: 3;
         content-align: center middle;
         margin: 1 0;
         border: double white;
         text-style: bold;
     }
 
-    ColorBar {
-        margin: 1 0;
+    SimpleBar {
+        margin: 0 0;
         height: 1;
     }
 
-    Label {
-        width: 100%;
-        content-align: center middle;
-    }
-
-    #shortcuts_grid {
-        layout: grid;
-        grid-size: 5;
-        grid-gutter: 1;
-        margin-top: 1;
-        height: auto;
-    }
-
-    .shortcut-btn {
-        min-width: 8;
-    }
-    
     #status {
         background: $accent;
         color: $text;
@@ -123,21 +81,27 @@ class LEDControllerApp(App):
         padding: 0 1;
     }
 
-    .hint {
-        color: $text-disabled;
+    .selected {
+        color: $accent;
+        text-style: bold;
     }
     """
 
-    TITLE = "Controlador LED Mouse-Friendly"
+    TITLE = "Controlador LED Teclado"
     BINDINGS = [
         Binding("q", "quit", "Sair"),
-        Binding("r", "reset", "Reset"),
+        Binding("up", "select_prev", "Sel. Acima", show=False),
+        Binding("down", "select_next", "Sel. Abaixo", show=False),
+        Binding("left", "adj_minus", "Ajustar -", show=False),
+        Binding("right", "adj_plus", "Ajustar +", show=False),
         Binding("x", "toggle_save", "Modo Salvar"),
     ]
 
+    # Estado HSV
     hue = reactive(0.0)
     sat = reactive(1.0)
     val = reactive(1.0)
+    selected_idx = reactive(0) # 0=Hue, 1=Sat, 2=Val
     status_msg = reactive("Escaneando...")
     save_mode = reactive(False)
 
@@ -154,31 +118,22 @@ class LEDControllerApp(App):
             except: return {}
         return {}
 
-    def save_shortcut(self, slot):
-        self.shortcuts[str(slot)] = {'h': self.hue, 's': self.sat, 'v': self.val}
-        with open(SHORTCUTS_FILE, 'w') as f: json.dump(self.shortcuts, f)
-        self.notify(f"Slot {slot} salvo")
-        self.save_mode = False
-
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="main_container"):
             yield Label("", id="status")
             yield Static("PREVIEW", classes="preview", id="preview")
             
-            yield ColorBar("MATIZ (H)", id="bar_hue", color="yellow")
-            yield ColorBar("SATUR (S)", id="bar_sat", color="cyan")
-            yield ColorBar("BRILHO (V)", id="bar_val", color="white")
+            yield SimpleBar("MATIZ (H)", id="bar_0")
+            yield SimpleBar("SATUR (S)", id="bar_1")
+            yield SimpleBar("BRILHO (V)", id="bar_2")
             
-            yield Label("CLIQUE NAS BARRAS PARA AJUSTAR", classes="hint")
+            yield Label("\n[b]Setas: Selecionar e Ajustar[/b]", classes="hint")
             yield Label("", id="mode_hint")
-            
-            with Container(id="shortcuts_grid"):
-                for i in range(1, 11):
-                    yield Button(str(i % 10), id=f"short_{i % 10}", classes="shortcut-btn")
         yield Footer()
 
     async def on_mount(self):
+        self.update_selection()
         self.update_visuals()
         if self.address:
             await self.connect_to_device(self.address)
@@ -212,12 +167,10 @@ class LEDControllerApp(App):
         except Exception as e:
             self.status_msg = f"ERRO: {e}"
 
-    def on_color_bar_changed(self, message: ColorBar.Changed):
-        """Captura mudanças vindo do clique/arraste do mouse."""
-        if message.bar_id == "bar_hue": self.hue = message.value
-        elif message.bar_id == "bar_sat": self.sat = message.value
-        elif message.bar_id == "bar_val": self.val = message.value
-        self.update_visuals()
+    def update_selection(self):
+        for i in range(3):
+            bar = self.query_one(f"#bar_{i}", SimpleBar)
+            bar.selected = (i == self.selected_idx)
 
     def update_visuals(self):
         r, g, b = colorsys.hsv_to_rgb(self.hue, self.sat, self.val)
@@ -227,42 +180,61 @@ class LEDControllerApp(App):
         try:
             prev = self.query_one("#preview")
             prev.styles.background = hex_c
-            prev.update(f"HSV: {self.hue:.2f}, {self.sat:.2f}, {self.val:.2f}\nRGB: {rgb[0]}, {rgb[1]}, {rgb[2]} | {hex_c}")
+            prev.update(f"RGB: {rgb[0]}, {rgb[1]}, {rgb[2]} | {hex_c}")
             
-            self.query_one("#bar_hue").value = self.hue
-            self.query_one("#bar_sat").value = self.sat
-            self.query_one("#bar_val").value = self.val
+            self.query_one("#bar_0").value = self.hue
+            self.query_one("#bar_1").value = self.sat
+            self.query_one("#bar_2").value = self.val
             
             if self.led:
                 self.run_worker(self.led.set_rgb(rgb))
         except: pass
 
-    def watch_status_msg(self, msg): self.query_one("#status").update(msg)
-    
-    def watch_save_mode(self, active):
-        hint = self.query_one("#mode_hint")
-        if active:
-            hint.update("[b yellow]MODO SALVAR ATIVO: CLIQUE NUM NÚMERO[/]")
-            self.query_one("#main_container").styles.border = ("thick", "yellow")
-        else:
-            hint.update("")
-            self.query_one("#main_container").styles.border = ("thick", "blue")
+    # Ações de Teclado
+    def action_select_next(self):
+        self.selected_idx = (self.selected_idx + 1) % 3
+        self.update_selection()
 
-    def action_toggle_save(self): self.save_mode = not self.save_mode
-    def action_reset(self): self.hue, self.sat, self.val = 0.0, 0.0, 1.0; self.update_visuals()
+    def action_select_prev(self):
+        self.selected_idx = (self.selected_idx - 1) % 3
+        self.update_selection()
 
-    async def on_button_pressed(self, event: Button.Pressed):
-        slot = event.button.id.split("_")[1]
-        if self.save_mode:
-            self.save_shortcut(slot)
-        else:
-            if slot in self.shortcuts:
-                s = self.shortcuts[slot]
-                self.hue, self.sat, self.val = s['h'], s['s'], s['v']
-                self.update_visuals()
-                self.notify(f"Slot {slot} carregado")
+    def action_adj_plus(self):
+        step = 0.05
+        if self.selected_idx == 0: self.hue = (self.hue + step) % 1.0
+        elif self.selected_idx == 1: self.sat = min(1.0, self.sat + step)
+        elif self.selected_idx == 2: self.val = min(1.0, self.val + step)
+        self.update_visuals()
+
+    def action_adj_minus(self):
+        step = 0.05
+        if self.selected_idx == 0: self.hue = (self.hue - step) % 1.0
+        elif self.selected_idx == 1: self.sat = max(0.0, self.sat - step)
+        elif self.selected_idx == 2: self.val = max(0.0, self.val - step)
+        self.update_visuals()
+
+    def action_toggle_save(self):
+        self.save_mode = not self.save_mode
+        self.query_one("#mode_hint").update("[b yellow]MODO SALVAR: PRESSIONE 1-9[/]" if self.save_mode else "")
+
+    def on_key(self, event):
+        if event.key.isdigit() and event.key != "0":
+            slot = event.key
+            if self.save_mode:
+                self.shortcuts[slot] = {'h': self.hue, 's': self.sat, 'v': self.val}
+                with open(SHORTCUTS_FILE, 'w') as f: json.dump(self.shortcuts, f)
+                self.notify(f"Slot {slot} salvo")
+                self.save_mode = False
+                self.query_one("#mode_hint").update("")
             else:
-                self.notify("Slot vazio. Pressione 'X' para salvar a cor atual aqui.")
+                if slot in self.shortcuts:
+                    s = self.shortcuts[slot]
+                    self.hue, self.sat, self.val = s['h'], s['s'], s['v']
+                    self.update_visuals()
+                    self.notify(f"Slot {slot} carregado")
+
+    def watch_status_msg(self, msg):
+        self.query_one("#status").update(msg)
 
 if __name__ == "__main__":
     app = LEDControllerApp(sys.argv[1] if len(sys.argv) > 1 else None)
