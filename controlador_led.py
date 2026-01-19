@@ -22,6 +22,28 @@ APP_CONFIG_DIR = os.path.join(CONFIG_DIR, "controlador-led")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
 SHORTCUTS_FILE = os.path.join(APP_CONFIG_DIR, "atalhos_v2.json")
 
+# Biblioteca de Presets Temáticos (HSV)
+PRESETS = {
+    "PASTEL": [
+        {"name": "Rosa", "h": 0.95, "s": 0.3, "v": 0.9},
+        {"name": "Verde", "h": 0.35, "s": 0.3, "v": 0.9},
+        {"name": "Azul", "h": 0.55, "s": 0.3, "v": 0.9},
+        {"name": "Lilás", "h": 0.75, "s": 0.3, "v": 0.9},
+    ],
+    "CONFORTO": [
+        {"name": "Quente", "h": 0.08, "s": 0.6, "v": 0.7},
+        {"name": "Vela", "h": 0.05, "s": 0.8, "v": 0.5},
+        {"name": "Âmbar", "h": 0.10, "s": 0.9, "v": 0.8},
+        {"name": "Noite", "h": 0.06, "s": 0.4, "v": 0.3},
+    ],
+    "FRIO": [
+        {"name": "Gelo", "h": 0.50, "s": 0.2, "v": 0.9},
+        {"name": "Oceano", "h": 0.60, "s": 0.8, "v": 0.6},
+        {"name": "Céu", "h": 0.58, "s": 0.5, "v": 0.8},
+        {"name": "Deep", "h": 0.65, "s": 0.9, "v": 0.4},
+    ]
+}
+
 class ColorBar(Static):
     """Um componente de barra de progresso que funciona como um slider customizado."""
     value = reactive(0.0)
@@ -79,7 +101,20 @@ class LEDControllerApp(App):
         height: auto;
     }
 
-    .shortcut-btn {
+    #presets_container {
+        margin-top: 1;
+        border-top: dashed $primary;
+        padding-top: 1;
+        height: auto;
+    }
+
+    .preset-cat {
+        text-style: bold;
+        color: $accent;
+        margin-top: 1;
+    }
+
+    .shortcut-btn, .preset-btn {
         min-width: 8;
     }
     
@@ -138,10 +173,21 @@ class LEDControllerApp(App):
             yield ColorBar("SATUR (S)", id="bar_sat", color="cyan")
             yield ColorBar("BRILHO (V)", id="bar_val", color="white")
             
-            yield Label("[b]Atalhos (X + 1-9 para salvar)[/b]")
+            yield Label("[b]Meus Atalhos[/b]")
             with Container(id="shortcuts_grid"):
                 for i in range(1, 11):
                     yield Button(str(i % 10), id=f"short_{i % 10}", classes="shortcut-btn")
+            
+            with Vertical(id="presets_container"):
+                yield Label("[b]Temas Prontos[/b]")
+                for cat, items in PRESETS.items():
+                    yield Label(cat, classes="preset-cat")
+                    with Horizontal():
+                        for item in items:
+                            btn = Button(item["name"], id=f"pre_{cat}_{item['name']}", classes="preset-btn")
+                            # Armazenar hsv no botão para facilitar
+                            btn.hsv_data = (item["h"], item["s"], item["v"])
+                            yield btn
         yield Footer()
 
     async def on_mount(self):
@@ -218,13 +264,20 @@ class LEDControllerApp(App):
     def action_reset(self): self.hue, self.sat, self.val = 0.0, 0.0, 1.0
 
     async def on_button_pressed(self, event: Button.Pressed):
-        slot = event.button.id.split("_")[1]
-        if slot in self.shortcuts:
-            s = self.shortcuts[slot]
-            self.hue, self.sat, self.val = s['h'], s['s'], s['v']
-            self.notify(f"Atalho {slot} carregado")
-        else:
-            self.notify(f"Slot {slot} vazio. Use X + Número para salvar.")
+        btn_id = event.button.id
+        if btn_id.startswith("short_"):
+            slot = btn_id.split("_")[1]
+            if slot in self.shortcuts:
+                s = self.shortcuts[slot]
+                self.hue, self.sat, self.val = s['h'], s['s'], s['v']
+                self.notify(f"Atalho {slot} carregado")
+            else:
+                self.notify(f"Slot {slot} vazio. Use X + Número para salvar.")
+        
+        elif btn_id.startswith("pre_"):
+            # Aplicar preset da biblioteca
+            self.hue, self.sat, self.val = event.button.hsv_data
+            self.notify(f"Tema aplicado!")
 
     # Sistema de salvar atalhos simplificado para TUI
     def on_key(self, event):
