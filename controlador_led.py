@@ -1,241 +1,247 @@
 #!/usr/bin/env python3
 import asyncio
 import sys
+import tty
+import termios
 import json
 import colorsys
 import os
 import subprocess
+import threading
 from bleak import BleakScanner
 from led_ble import LEDBLE
 
-from textual.app import App, ComposeResult
-from textual.containers import Container, Vertical
-from textual.widgets import Header, Footer, Label, Button, Static
-from textual.reactive import reactive
-from textual.binding import Binding
-
-# Configurações de diretório
+# Determinar o diretório onde o script está localizado
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Configuração para salvar em diretório de usuário (XDG_CONFIG_HOME ou ~/.config)
 CONFIG_DIR = os.environ.get("XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config"))
 APP_CONFIG_DIR = os.path.join(CONFIG_DIR, "controlador-led")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
-SHORTCUTS_FILE = os.path.join(APP_CONFIG_DIR, "atalhos_v2.json")
+SHORTCUTS_FILE = os.path.join(APP_CONFIG_DIR, "atalhos_led.json")
 
-class SimpleBar(Static):
-    """Uma barra de progresso ASCII simples que reage à seleção."""
-    value = reactive(0.0)
-    selected = reactive(False)
-    
-    def __init__(self, label, initial_value=0.0, **kwargs):
-        super().__init__(**kwargs)
-        self.label_text = label
-        self.value = initial_value
+class Getch:
+    """Captura uma tecla por vez (Linux/Mac)."""
+    def __call__(self):
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            ch = sys.stdin.read(1)
+            if ch == '\x1b':  # Sequência de escape (setas)
+                ch += sys.stdin.read(2)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
 
-    def render(self) -> str:
-        width = self.size.width - 20
-        if width <= 0: width = 20
-        filled = int(self.value * width)
-        
-        prefix = "> " if self.selected else "  "
-        bar_char = "█" if self.selected else "▒"
-        empty_char = " " if self.selected else "░"
-        
-        bar = bar_char * filled + empty_char * (width - filled)
-        style = "reverse" if self.selected else ""
-        
-        return f"{prefix}{self.label_text:10} [{style}]{bar}[/] {int(self.value * 100):3}%"
-
-class LEDControllerApp(App):
-    CSS = """
-    Screen {
-        align: center middle;
-    }
-
-    #main_container {
-        width: 60;
-        height: auto;
-        border: thick $primary;
-        padding: 1;
-        background: $surface;
-    }
-
-    .preview {
-        width: 100%;
-        height: 3;
-        content-align: center middle;
-        margin: 1 0;
-        border: double white;
-        text-style: bold;
-    }
-
-    SimpleBar {
-        margin: 0 0;
-        height: 1;
-    }
-
-    #status {
-        background: $accent;
-        color: $text;
-        text-style: bold;
-        margin-bottom: 1;
-        padding: 0 1;
-    }
-
-    .selected {
-        color: $accent;
-        text-style: bold;
-    }
-    """
-
-    TITLE = "Controlador LED Teclado"
-    BINDINGS = [
-        Binding("q", "quit", "Sair"),
-        Binding("up", "select_prev", "Sel. Acima", show=False),
-        Binding("down", "select_next", "Sel. Abaixo", show=False),
-        Binding("left", "adj_minus", "Ajustar -", show=False),
-        Binding("right", "adj_plus", "Ajustar +", show=False),
-        Binding("x", "toggle_save", "Modo Salvar"),
-    ]
-
-    # Estado HSV
-    hue = reactive(0.0)
-    sat = reactive(1.0)
-    val = reactive(1.0)
-    selected_idx = reactive(0) # 0=Hue, 1=Sat, 2=Val
-    status_msg = reactive("Escaneando...")
-    save_mode = reactive(False)
-
-    def __init__(self, address=None):
-        super().__init__()
+class LEDController:
+    def __init__(self, address):
         self.address = address
         self.led = None
         self.shortcuts = self.load_shortcuts()
+        self.hue = 0.0
+        self.saturation = 1.0
+        self.brightness = 1.0  # 0.0 a 1.0 (para cálculo local)
 
     def load_shortcuts(self):
         if os.path.exists(SHORTCUTS_FILE):
             try:
-                with open(SHORTCUTS_FILE, 'r') as f: return json.load(f)
-            except: return {}
+                with open(SHORTCUTS_FILE, 'r') as f:
+                    return json.load(f)
+            except:
+                return {}
         return {}
 
-    def compose(self) -> ComposeResult:
-        yield Header()
-        with Vertical(id="main_container"):
-            yield Label("", id="status")
-            yield Static("PREVIEW", classes="preview", id="preview")
-            
-            yield SimpleBar("MATIZ (H)", id="bar_0")
-            yield SimpleBar("SATUR (S)", id="bar_1")
-            yield SimpleBar("BRILHO (V)", id="bar_2")
-            
-            yield Label("\n[b]Setas: Selecionar e Ajustar[/b]", classes="hint")
-            yield Label("", id="mode_hint")
-        yield Footer()
+    def save_shortcuts(self):
+        with open(SHORTCUTS_FILE, 'w') as f:
+            json.dump(self.shortcuts, f)
+        print(f"\rAtalhos salvos em {SHORTCUTS_FILE}    ")
 
-    async def on_mount(self):
-        self.update_selection()
-        self.update_visuals()
-        if self.address:
-            await self.connect_to_device(self.address)
-        else:
-            self.run_worker(self.auto_scan)
-
-    async def auto_scan(self):
-        devices = await BleakScanner.discover()
-        leds = [d for d in devices if d.name and d.name != "Unknown"]
-        if leds:
-            await self.connect_to_device(leds[0].address)
-        else:
-            self.status_msg = "Nenhum dispositivo encontrado."
-
-    async def connect_to_device(self, address):
-        self.status_msg = f"Conectando: {address}..."
-        try:
-            device = await BleakScanner.find_device_by_address(address)
-            self.led = LEDBLE(device)
-            try:
-                await self.led.update()
-                await self.led.turn_on()
-            except: pass
-            
-            if self.led.rgb:
-                r, g, b = self.led.rgb
-                h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
-                self.hue, self.sat, self.val = h, s, v
-            
-            self.status_msg = f"CONECTADO: {device.name or address}"
-        except Exception as e:
-            self.status_msg = f"ERRO: {e}"
-
-    def update_selection(self):
-        for i in range(3):
-            bar = self.query_one(f"#bar_{i}", SimpleBar)
-            bar.selected = (i == self.selected_idx)
-
-    def update_visuals(self):
-        r, g, b = colorsys.hsv_to_rgb(self.hue, self.sat, self.val)
-        rgb = (int(r*255), int(g*255), int(b*255))
-        hex_c = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}".upper()
+    async def connect(self):
+        print(f"Conectando a {self.address}...")
+        # LEDBLE requer um BLEDevice, então escaneamos para obtê-lo
+        device = await BleakScanner.find_device_by_address(self.address)
+        if not device:
+            raise Exception(f"Dispositivo {self.address} não encontrado.")
         
+        self.led = LEDBLE(device)
+        
+        # Tratamento de erro robusto para dispositivos fora do padrão (IndexError)
         try:
-            prev = self.query_one("#preview")
-            prev.styles.background = hex_c
-            prev.update(f"RGB: {rgb[0]}, {rgb[1]}, {rgb[2]} | {hex_c}")
+            await self.led.update()
+            await self.led.turn_on()
+        except IndexError:
+             print("\rAviso: Resposta incompleta do LED (IndexError). Tentando continuar...")
+        except Exception as e:
+             print(f"\rAviso ao conectar: {e}")
+
+        # Sincronizar estado local se possível
+        if self.led.rgb:
+            r, g, b = self.led.rgb
+            h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
+            self.hue = h
+            self.saturation = s
+            # A biblioteca retorna brilho separado às vezes, mas vamos usar V do HSV
+            self.brightness = max(v, 0.1) # Evitar 0 absoluto para não perder a cor ao aumentar
+        
+        print("Conectado! Ligando LED...")
+        
+        print("\n=== CONTROLE ASCII ===")
+        print("Setas E/D: Mudar Cor (Hue)")
+        print("Setas C/B: Mudar Brilho")
+        print("Teclas 1-9: Carregar atalho")
+        print("s depois numero: Salvar atalho no slot")
+        print("Q ou ESC: Sair")
+        print("======================")
+
+    async def set_color(self):
+        r, g, b = colorsys.hsv_to_rgb(self.hue, self.saturation, self.brightness)
+        rgb = (int(r * 255), int(g * 255), int(b * 255))
+        print(f"\rH:{self.hue:.2f} S:{self.saturation:.2f} V:{self.brightness:.2f} (RGB: {rgb})   ", end="", flush=True)
+        try:
+            await self.led.set_rgb(rgb)
+        except Exception as e:
+            pass # Ignorar erros de envio rápido
+
+    async def run(self):
+        await self.connect()
+        getch = Getch()
+        loop = asyncio.get_running_loop()
+
+        running = True
+        while running:
+            # Executar getch em thread separada para não bloquear o loop asyncio
+            key = await loop.run_in_executor(None, getch)
+
+            if key == '\x03' or key == 'q' or key == '\x1b': # Ctrl+C, q, Esc (sozinho)
+                if key == '\x1b': 
+                    # Verificar se é escape sequence ou tecla ESC mesmo
+                    # Como getch lê 3 chars para setas, se vier só 1 é ESC
+                    running = False 
+                else:
+                    running = False
+
+            elif key == '\x1b[A': # Cima
+                self.brightness = min(1.0, self.brightness + 0.05)
+                await self.set_color()
+
+            elif key == '\x1b[B': # Baixo
+                self.brightness = max(0.0, self.brightness - 0.05)
+                await self.set_color()
+
+            elif key == '\x1b[C': # Direita
+                self.hue = (self.hue + 0.02) % 1.0
+                await self.set_color()
+
+            elif key == '\x1b[D': # Esquerda
+                self.hue = (self.hue - 0.02) % 1.0
+                await self.set_color()
             
-            self.query_one("#bar_0").value = self.hue
-            self.query_one("#bar_1").value = self.sat
-            self.query_one("#bar_2").value = self.val
-            
-            if self.led:
-                self.run_worker(self.led.set_rgb(rgb))
-        except: pass
-
-    # Ações de Teclado
-    def action_select_next(self):
-        self.selected_idx = (self.selected_idx + 1) % 3
-        self.update_selection()
-
-    def action_select_prev(self):
-        self.selected_idx = (self.selected_idx - 1) % 3
-        self.update_selection()
-
-    def action_adj_plus(self):
-        step = 0.05
-        if self.selected_idx == 0: self.hue = (self.hue + step) % 1.0
-        elif self.selected_idx == 1: self.sat = min(1.0, self.sat + step)
-        elif self.selected_idx == 2: self.val = min(1.0, self.val + step)
-        self.update_visuals()
-
-    def action_adj_minus(self):
-        step = 0.05
-        if self.selected_idx == 0: self.hue = (self.hue - step) % 1.0
-        elif self.selected_idx == 1: self.sat = max(0.0, self.sat - step)
-        elif self.selected_idx == 2: self.val = max(0.0, self.val - step)
-        self.update_visuals()
-
-    def action_toggle_save(self):
-        self.save_mode = not self.save_mode
-        self.query_one("#mode_hint").update("[b yellow]MODO SALVAR: PRESSIONE 1-9[/]" if self.save_mode else "")
-
-    def on_key(self, event):
-        if event.key.isdigit() and event.key != "0":
-            slot = event.key
-            if self.save_mode:
-                self.shortcuts[slot] = {'h': self.hue, 's': self.sat, 'v': self.val}
-                with open(SHORTCUTS_FILE, 'w') as f: json.dump(self.shortcuts, f)
-                self.notify(f"Slot {slot} salvo")
-                self.save_mode = False
-                self.query_one("#mode_hint").update("")
-            else:
+            # Atalhos (1-9)
+            elif key.isdigit() and key != '0':
+                slot = key
                 if slot in self.shortcuts:
-                    s = self.shortcuts[slot]
-                    self.hue, self.sat, self.val = s['h'], s['s'], s['v']
-                    self.update_visuals()
-                    self.notify(f"Slot {slot} carregado")
+                    data = self.shortcuts[slot]
+                    self.hue = data['h']
+                    self.saturation = data['s']
+                    self.brightness = data['v']
+                    print(f"\rCarregado slot {slot}      ", end="")
+                    await self.set_color()
+                else:
+                    print(f"\rSlot {slot} vazio          ", end="")
 
-    def watch_status_msg(self, msg):
-        self.query_one("#status").update(msg)
+            # Salvar
+            elif key == 's':
+                print("\rPressione 1-9 para salvar... ", end="")
+                next_key = await loop.run_in_executor(None, getch)
+                if next_key.isdigit() and next_key != '0':
+                    self.shortcuts[next_key] = {
+                        'h': self.hue,
+                        's': self.saturation,
+                        'v': self.brightness
+                    }
+                    self.save_shortcuts()
+                else:
+                    print("\rCancelado.                 ")
+
+        await self.led.stop()
+        print("\nDesconectado.")
+
+async def scan():
+    print("Escaneando dispositivos BLE...")
+    devices = await BleakScanner.discover()
+    led_devices = []
+    for d in devices:
+        if d.name and d.name != "Unknown":
+            led_devices.append(d)
+    
+    if not led_devices:
+        print("Nenhum dispositivo com nome encontrado. Mostrando todos:")
+        led_devices = devices
+
+    for i, dev in enumerate(led_devices):
+        print(f"{i}: {dev.name} ({dev.address})")
+    
+    if not led_devices:
+        return None
+
+    try:
+        idx = int(input("Selecione o número do dispositivo: "))
+        return led_devices[idx].address
+    except:
+        return None
+
+def check_update():
+    """Checks for updates in background."""
+    try:
+        if not os.path.exists(os.path.join(SCRIPT_DIR, ".git")):
+            return
+
+        subprocess.run(
+            ["git", "fetch"],
+            cwd=SCRIPT_DIR,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        
+        result = subprocess.run(
+            ["git", "status", "-uno"],
+            cwd=SCRIPT_DIR,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        
+        if "behind" in result.stdout:
+            print("\n\033[93mAviso: Nova versão disponível! Execute ./update.sh\033[0m")
+            
+    except Exception:
+        pass
+
+async def main():
+    # Iniciar check de update em thread para não bloquear
+    threading.Thread(target=check_update, daemon=True).start()
+
+    address = None
+    if len(sys.argv) > 1:
+        address = sys.argv[1]
+    else:
+        address = await scan()
+    
+    if not address:
+        print("Endereço não fornecido ou inválido.")
+        return
+
+    controller = LEDController(address)
+    await controller.run()
 
 if __name__ == "__main__":
-    app = LEDControllerApp(sys.argv[1] if len(sys.argv) > 1 else None)
-    app.run()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Erro: {e}")
