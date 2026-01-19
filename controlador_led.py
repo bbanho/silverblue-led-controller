@@ -6,6 +6,7 @@ import colorsys
 import os
 import subprocess
 import threading
+import unicodedata
 from bleak import BleakScanner
 from led_ble import LEDBLE
 
@@ -188,8 +189,12 @@ class LEDControllerApp(App):
                     yield Label(cat, classes="preset-cat")
                     with Horizontal():
                         for item in items:
-                            # Criar um ID seguro (sem acentos)
-                            safe_name = item["name"].lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+                            # Função robusta para remover acentos e caracteres especiais
+                            def slugify(text):
+                                return "".join(c for c in unicodedata.normalize('NFD', text)
+                                             if unicodedata.category(c) != 'Mn').lower()
+                            
+                            safe_name = slugify(item["name"])
                             btn = Button(item["name"], id=f"pre_{cat}_{safe_name}", classes="preset-btn")
                             # Armazenar hsv no botão para facilitar
                             btn.hsv_data = (item["h"], item["s"], item["v"])
