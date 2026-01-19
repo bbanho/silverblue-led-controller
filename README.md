@@ -65,4 +65,4 @@ Para atualizar, execute:
 - `run_led.sh`: Wrapper para rodar com o venv correto.
 - `install.sh`: Script de automação de setup.
 - `update.sh`: Script para atualizar o repositório e dependências.
-- `atalhos_led.json`: Armazena seus presets (gerado automaticamente).
+- `atalhos_led.json`: Armazena seus presets (salvo em `~/.config/controlador-led/`).

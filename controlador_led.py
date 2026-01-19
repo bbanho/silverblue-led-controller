@@ -18,7 +18,12 @@ from textual.message import Message
 from textual.worker import Worker
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SHORTCUTS_FILE = os.path.join(SCRIPT_DIR, "atalhos_led.json")
+
+# Configuração para salvar em diretório de usuário (XDG_CONFIG_HOME ou ~/.config)
+CONFIG_DIR = os.environ.get("XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config"))
+APP_CONFIG_DIR = os.path.join(CONFIG_DIR, "controlador-led")
+os.makedirs(APP_CONFIG_DIR, exist_ok=True)
+SHORTCUTS_FILE = os.path.join(APP_CONFIG_DIR, "atalhos_led.json")
 
 class DeviceButton(Button):
     def __init__(self, device, **kwargs):
