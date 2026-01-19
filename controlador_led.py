@@ -95,7 +95,6 @@ class LEDControllerApp(App):
     ColorBar {
         margin: 1 0;
         height: 1;
-        cursor: pointer;
     }
 
     Label {
@@ -125,7 +124,6 @@ class LEDControllerApp(App):
 
     .hint {
         color: $text-disabled;
-        font-size: 80%;
     }
     """
 
