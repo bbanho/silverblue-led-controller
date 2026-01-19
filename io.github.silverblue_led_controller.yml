@@ -1,0 +1,32 @@
+app-id: io.github.silverblue_led_controller
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: run_led
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=system-bus  # Necessário para BlueZ (Bluetooth)
+  - --device=all         # Acesso a hardware
+  - --filesystem=xdg-config/controlador-led:create # Persistência de configs
+modules:
+  # Instalação de dependências Python (Requer --share=network no build)
+  - name: python-dependencies
+    buildsystem: simple
+    build-commands:
+      - pip3 install --prefix=/app --no-cache-dir -r requirements.txt
+    sources:
+      - type: file
+        path: requirements.txt
+
+  # Aplicação Principal
+  - name: led-controller
+    buildsystem: simple
+    build-commands:
+      - install -D flatpak-run.sh /app/bin/run_led
+      - install -D controlador_led.py /app/bin/controlador_led.py
+      # Se houver outros arquivos estáticos, copie-os aqui
+    sources:
+      - type: dir
+        path: .
