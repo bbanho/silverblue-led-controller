@@ -188,7 +188,9 @@ class LEDControllerApp(App):
                     yield Label(cat, classes="preset-cat")
                     with Horizontal():
                         for item in items:
-                            btn = Button(item["name"], id=f"pre_{cat}_{item['name']}", classes="preset-btn")
+                            # Criar um ID seguro (sem acentos)
+                            safe_name = item["name"].lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+                            btn = Button(item["name"], id=f"pre_{cat}_{safe_name}", classes="preset-btn")
                             # Armazenar hsv no botão para facilitar
                             btn.hsv_data = (item["h"], item["s"], item["v"])
                             yield btn
