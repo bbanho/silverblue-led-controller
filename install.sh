@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Verificação de segurança: Não rodar como root
+if [ "$EUID" -eq 0 ]; then
+  echo "Erro: Este script não deve ser executado como root (sudo)."
+  echo "Ele instala arquivos no diretório do usuário atual."
+  exit 1
+fi
+
 INSTALL_DIR="$HOME/.script"
 DESKTOP_FILE="controlador_led.desktop"
 DESKTOP_PATH="$HOME/.local/share/applications/$DESKTOP_FILE"
@@ -35,9 +42,10 @@ chmod +x controlador_led.py run_led.sh update.sh
 echo "Instalando atalho no menu..."
 mkdir -p "$HOME/.local/share/applications"
 
-# Atualizar o caminho do ícone e exec no arquivo .desktop para garantir caminhos absolutos corretos
-# (O arquivo .desktop já deve estar com caminhos absolutos, mas vamos garantir)
+# Copiar e ajustar o caminho do executável no arquivo .desktop
 cp "$DESKTOP_FILE" "$DESKTOP_PATH"
+# Substituir a linha Exec=... pelo caminho correto dinâmico
+sed -i "s|Exec=.*|Exec=$INSTALL_DIR/run_led.sh|" "$DESKTOP_PATH"
 
 # Atualizar banco de dados de desktop entries
 update-desktop-database "$HOME/.local/share/applications" || true
