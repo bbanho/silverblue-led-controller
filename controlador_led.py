@@ -89,9 +89,9 @@ class LEDController:
         
         print(f"{Colors.GREEN}Conectado!{Colors.ENDC} Ligando LED...")
         
-        print(f"\n{Colors.BOLD}=== CONTROLE RGB SEMÂNTICO ==={Colors.ENDC}")
-        print(f"{Colors.RED}R / F{Colors.ENDC}: Vermelho +/-")
-        print(f"{Colors.GREEN}G / V{Colors.ENDC}: Verde    +/-")
+        print(f"\n{Colors.BOLD}=== CONTROLE RGB (RT GH BN) ==={Colors.ENDC}")
+        print(f"{Colors.RED}R / T{Colors.ENDC}: Vermelho +/-")
+        print(f"{Colors.GREEN}G / H{Colors.ENDC}: Verde    +/-")
         print(f"{Colors.BLUE}B / N{Colors.ENDC}: Azul     +/-")
         print(f"{Colors.BOLD}1-9{Colors.ENDC}: Carregar atalho")
         print(f"{Colors.YELLOW}X{Colors.ENDC} depois numero: Salvar atalho")
@@ -128,19 +128,19 @@ class LEDController:
             if key in ('\x03', 'q', '\x1b'): # Ctrl+C, q, Esc
                 running = False
 
-            # Vermelho (R/F)
+            # Vermelho (R/T)
             elif key == 'r':
                 self.r += step
                 await self.set_color()
-            elif key == 'f':
+            elif key == 't':
                 self.r -= step
                 await self.set_color()
 
-            # Verde (G/V)
+            # Verde (G/H)
             elif key == 'g':
                 self.g += step
                 await self.set_color()
-            elif key == 'v':
+            elif key == 'h':
                 self.g -= step
                 await self.set_color()
 
