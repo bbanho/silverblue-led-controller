@@ -130,11 +130,11 @@ class LEDController:
                 await self.set_color()
 
             elif key == 'd': # Direita
-                self.hue = (self.hue + 0.02) % 1.0
+                self.hue = (self.hue + 0.05) % 1.0
                 await self.set_color()
 
             elif key == 'a': # Esquerda
-                self.hue = (self.hue - 0.02) % 1.0
+                self.hue = (self.hue - 0.05) % 1.0
                 await self.set_color()
             
             # Atalhos (1-9)
