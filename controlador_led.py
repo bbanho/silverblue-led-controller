@@ -209,17 +209,15 @@ class LEDControllerApp(App):
             
             self.led = LEDBLE(device)
             
-            # Alguns dispositivos falham no update inicial se o formato de resposta for diferente do esperado
+            # Alguns dispositivos falham no update/turn_on se o formato de resposta for diferente
             try:
                 await self.led.update()
+                await self.led.turn_on()
             except IndexError:
-                # Falha conhecida em led-ble para alguns dispositivos que retornam menos bytes
-                self.notify("Aviso: Falha ao ler estado inicial do LED (IndexError). Tentando continuar...", severity="warning")
+                self.notify("Aviso: Resposta incompleta do LED (IndexError). Ignorando...", severity="warning")
             except Exception as e:
-                self.notify(f"Aviso ao ler estado: {e}", severity="warning")
+                self.notify(f"Aviso ao iniciar: {e}", severity="warning")
 
-            await self.led.turn_on()
-            
             # Sync state - se update falhou, usar defaults
             if self.led.rgb:
                 r, g, b = self.led.rgb
