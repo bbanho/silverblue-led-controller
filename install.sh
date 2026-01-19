@@ -16,10 +16,12 @@ echo "=== Instalador Controlador LED (Fedora Silverblue Friendly) ==="
 
 # 1. Garantir que o diretório existe (se rodando de outro lugar)
 if [ "$(pwd)" != "$INSTALL_DIR" ]; then
-    echo "Movendo arquivos para $INSTALL_DIR..."
+    echo "Sincronizando arquivos para $INSTALL_DIR..."
     mkdir -p "$INSTALL_DIR"
-    # Usar cp -a . para copiar tudo, incluindo ocultos (.git) para permitir atualizações
-    cp -a . "$INSTALL_DIR/"
+    # Usar rsync para sincronizar. É mais eficiente e evita erros de permissão 
+    # ao tentar sobrescrever arquivos que já existem e estão com permissões restritas.
+    # Excluímos as pastas do venv (bin, lib, etc) para não dar conflito.
+    rsync -av --exclude='bin' --exclude='lib' --exclude='lib64' --exclude='include' --exclude='share' --exclude='pyvenv.cfg' . "$INSTALL_DIR/"
     cd "$INSTALL_DIR"
 fi
 
