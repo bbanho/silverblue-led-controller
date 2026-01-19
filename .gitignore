@@ -1,0 +1,10 @@
+bin/
+lib/
+lib64/
+include/
+share/
+pyvenv.cfg
+__pycache__/
+*.pyc
+atalhos_led.json
+firebase-debug.log
