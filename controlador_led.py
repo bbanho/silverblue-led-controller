@@ -179,6 +179,10 @@ async def scan():
         print("Nenhum dispositivo com nome encontrado. Mostrando todos:")
         led_devices = devices
 
+    if len(led_devices) == 1:
+        print(f"Dispositivo único encontrado: {led_devices[0].name} ({led_devices[0].address})")
+        return led_devices[0].address
+
     for i, dev in enumerate(led_devices):
         print(f"{i}: {dev.name} ({dev.address})")
     
