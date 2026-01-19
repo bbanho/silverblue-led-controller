@@ -11,8 +11,8 @@ from led_ble import LEDBLE
 from textual.app import App, ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Header, Footer, Label, Button, Static, LoadingIndicator
-# Slider was added in recent versions, ensuring we have it
-from textual.widgets import Slider
+# Slider is an external widget
+from textual_slider import Slider
 from textual.reactive import reactive
 from textual.message import Message
 from textual.worker import Worker
