@@ -11,7 +11,8 @@ echo "=== Instalador Controlador LED (Fedora Silverblue Friendly) ==="
 if [ "$(pwd)" != "$INSTALL_DIR" ]; then
     echo "Movendo arquivos para $INSTALL_DIR..."
     mkdir -p "$INSTALL_DIR"
-    cp -r * "$INSTALL_DIR/"
+    # Usar cp -a . para copiar tudo, incluindo ocultos (.git) para permitir atualizações
+    cp -a . "$INSTALL_DIR/"
     cd "$INSTALL_DIR"
 fi
 
@@ -28,7 +29,7 @@ echo "Instalando dependências..."
 
 # 4. Permissões
 echo "Ajustando permissões..."
-chmod +x controlador_led.py run_led.sh
+chmod +x controlador_led.py run_led.sh update.sh
 
 # 5. Instalar Desktop Entry
 echo "Instalando atalho no menu..."

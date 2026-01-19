@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Controlador LED
+Comment=Control LED Strips via BLE
+Exec=/var/home/bruno/.script/run_led.sh
+Icon=utilities-terminal
+Terminal=true
+Type=Application
+Categories=Utility;

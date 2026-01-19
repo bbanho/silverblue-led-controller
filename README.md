@@ -51,9 +51,18 @@ Procure por **"Controlador LED"** no seu menu de aplicativos.
 - **s + [1-9]:** Salvar configuração atual no slot
 - **q / Esc:** Sair
 
+## Atualização
+
+O aplicativo verifica automaticamente por atualizações ao iniciar. Se houver uma nova versão, você será notificado.
+Para atualizar, execute:
+```bash
+~/.script/update.sh
+```
+
 ## Estrutura de Arquivos
 
 - `controlador_led.py`: Script principal.
 - `run_led.sh`: Wrapper para rodar com o venv correto.
 - `install.sh`: Script de automação de setup.
+- `update.sh`: Script para atualizar o repositório e dependências.
 - `atalhos_led.json`: Armazena seus presets (gerado automaticamente).
