@@ -9,4 +9,5 @@ led-ble==1.1.7
 uart-devices==0.1.1
 usb-devices==0.4.5
 webcolors==25.10.0
-textual==0.86.0
+textual>=1.0.0
+textual-slider>=0.2.0
