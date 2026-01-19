@@ -141,15 +141,15 @@ class LEDControllerApp(App):
         Binding("s", "dec_val", "Brilho -"),
         Binding("e", "inc_sat", "Sat +"),
         Binding("f", "dec_sat", "Sat -"),
-        Binding("t", "inc_temp", "Temp + (Frio)"),
-        Binding("g", "dec_temp", "Temp - (Quente)"),
+        Binding("p", "inc_step", "Passo +"),
+        Binding("o", "dec_step", "Passo -"),
     ]
 
     # Estado HSV reativo
     hue = reactive(0.0)
     sat = reactive(1.0)
     val = reactive(1.0)
-    temp = reactive(0.5) # 0.5 = Neutro
+    step = reactive(0.05) # Sensibilidade
     status_msg = reactive("Iniciando...")
 
     def __init__(self, address=None):
@@ -176,7 +176,7 @@ class LEDControllerApp(App):
             yield ColorBar("MATIZ (H)", id="bar_hue", color="yellow")
             yield ColorBar("SATUR (S)", id="bar_sat", color="cyan")
             yield ColorBar("BRILHO (V)", id="bar_val", color="white")
-            yield ColorBar("TEMP (T/G)", id="bar_temp", color="blue")
+            yield ColorBar("PASSO (P/O)", id="bar_step", color="green")
             
             yield Label("[b]Meus Atalhos[/b]")
             with Container(id="shortcuts_grid"):
@@ -189,14 +189,11 @@ class LEDControllerApp(App):
                     yield Label(cat, classes="preset-cat")
                     with Horizontal():
                         for item in items:
-                            # Função robusta para remover acentos e caracteres especiais
                             def slugify(text):
                                 return "".join(c for c in unicodedata.normalize('NFD', text)
                                              if unicodedata.category(c) != 'Mn').lower()
-                            
                             safe_name = slugify(item["name"])
                             btn = Button(item["name"], id=f"pre_{cat}_{safe_name}", classes="preset-btn")
-                            # Armazenar hsv no botão para facilitar
                             btn.hsv_data = (item["h"], item["s"], item["v"])
                             yield btn
         yield Footer()
@@ -212,11 +209,10 @@ class LEDControllerApp(App):
         self.status_msg = "Escaneando Bluetooth..."
         devices = await BleakScanner.discover()
         led_devices = [d for d in devices if d.name and d.name != "Unknown"]
-        
         if len(led_devices) == 1:
             await self.connect_to_device(led_devices[0].address)
         elif len(led_devices) > 1:
-            self.status_msg = "Múltiplos dispositivos encontrados. Use CLI para escolher."
+            self.status_msg = "Múltiplos dispositivos encontrados."
         else:
             self.status_msg = "Nenhum LED encontrado."
 
@@ -228,7 +224,7 @@ class LEDControllerApp(App):
             try:
                 await self.led.update()
                 await self.led.turn_on()
-            except IndexError: pass # Hardware quirk
+            except IndexError: pass
             
             if self.led.rgb:
                 r, g, b = self.led.rgb
@@ -242,18 +238,7 @@ class LEDControllerApp(App):
     def watch_hue(self): self.update_ui_elements()
     def watch_sat(self): self.update_ui_elements()
     def watch_val(self): self.update_ui_elements()
-    def watch_temp(self, value: float):
-        # Mapear Temperatura para Hue/Sat
-        if value <= 0.5:
-            # Do Branco Quente (0.0) ao Neutro (0.5)
-            self.hue = 0.08 
-            self.sat = 0.8 * (1.0 - (value / 0.5))
-        else:
-            # Do Neutro (0.5) ao Branco Frio (1.0)
-            self.hue = 0.60
-            self.sat = 0.4 * ((value - 0.5) / 0.5)
-        self.update_ui_elements()
-
+    def watch_step(self): self.update_ui_elements()
     def watch_status_msg(self, msg): self.query_one("#status").update(msg)
 
     def update_ui_elements(self):
@@ -268,7 +253,7 @@ class LEDControllerApp(App):
             self.query_one("#bar_hue").value = self.hue
             self.query_one("#bar_sat").value = self.sat
             self.query_one("#bar_val").value = self.val
-            self.query_one("#bar_temp").value = self.temp
+            self.query_one("#bar_step").value = self.step
             
             if self.led:
                 self.run_worker(self.send_color_to_led(int(r*255), int(g*255), int(b*255)))
@@ -279,15 +264,15 @@ class LEDControllerApp(App):
         except: pass
 
     # Ações de Teclado
-    def action_inc_hue(self): self.hue = (self.hue + 0.05) % 1.0
-    def action_dec_hue(self): self.hue = (self.hue - 0.05) % 1.0
-    def action_inc_sat(self): self.sat = min(1.0, self.sat + 0.1)
-    def action_dec_sat(self): self.sat = max(0.0, self.sat - 0.1)
-    def action_inc_val(self): self.val = min(1.0, self.val + 0.1)
-    def action_dec_val(self): self.val = max(0.0, self.val - 0.1)
-    def action_inc_temp(self): self.temp = min(1.0, self.temp + 0.05)
-    def action_dec_temp(self): self.temp = max(0.0, self.temp - 0.05)
-    def action_reset(self): self.hue, self.sat, self.val, self.temp = 0.0, 0.0, 1.0, 0.5
+    def action_inc_hue(self): self.hue = (self.hue + self.step) % 1.0
+    def action_dec_hue(self): self.hue = (self.hue - self.step) % 1.0
+    def action_inc_sat(self): self.sat = min(1.0, self.sat + self.step)
+    def action_dec_sat(self): self.sat = max(0.0, self.sat - self.step)
+    def action_inc_val(self): self.val = min(1.0, self.val + self.step)
+    def action_dec_val(self): self.val = max(0.0, self.val - self.step)
+    def action_inc_step(self): self.step = min(0.5, self.step + 0.01)
+    def action_dec_step(self): self.step = max(0.01, self.step - 0.01)
+    def action_reset(self): self.hue, self.sat, self.val = 0.0, 0.0, 1.0
 
     async def on_button_pressed(self, event: Button.Pressed):
         btn_id = event.button.id
@@ -299,22 +284,16 @@ class LEDControllerApp(App):
                 self.notify(f"Atalho {slot} carregado")
             else:
                 self.notify(f"Slot {slot} vazio. Use X + Número para salvar.")
-        
         elif btn_id.startswith("pre_"):
-            # Aplicar preset da biblioteca
             self.hue, self.sat, self.val = event.button.hsv_data
             self.notify(f"Tema aplicado!")
 
-    # Sistema de salvar atalhos simplificado para TUI
     def on_key(self, event):
         if event.key == "x":
-            self.notify("Pressione o número (0-9) para salvar a cor atual", timeout=3)
-            # Logica de captura do próximo digito seria complexa aqui, 
-            # simplificando: o usuário clica no botão com Shift ou algo?
-            # Vamos manter apenas teclado: se pressionar numero logo após X
+            self.notify("Pressione o número (0-9) para salvar", timeout=2)
+            # Simplificação para salvar no modo teclado ASCII
             pass
 
 if __name__ == "__main__":
-    address = sys.argv[1] if len(sys.argv) > 1 else None
-    app = LEDControllerApp(address)
+    app = LEDControllerApp(sys.argv[1] if len(sys.argv) > 1 else None)
     app.run()
