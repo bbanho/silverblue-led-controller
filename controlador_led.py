@@ -208,23 +208,36 @@ class LEDControllerApp(App):
                 raise Exception("Dispositivo não encontrado")
             
             self.led = LEDBLE(device)
-            await self.led.update()
+            
+            # Alguns dispositivos falham no update inicial se o formato de resposta for diferente do esperado
+            try:
+                await self.led.update()
+            except IndexError:
+                # Falha conhecida em led-ble para alguns dispositivos que retornam menos bytes
+                self.notify("Aviso: Falha ao ler estado inicial do LED (IndexError). Tentando continuar...", severity="warning")
+            except Exception as e:
+                self.notify(f"Aviso ao ler estado: {e}", severity="warning")
+
             await self.led.turn_on()
             
-            # Sync state
-            r, g, b = self.led.rgb
-            h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
-            self.hue = h
-            self.saturation = s
-            self.brightness = max(v, 0.1)
+            # Sync state - se update falhou, usar defaults
+            if self.led.rgb:
+                r, g, b = self.led.rgb
+                h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
+                self.hue = h
+                self.saturation = s
+                self.brightness = max(v, 0.1)
 
             self.status_label.update(f"Conectado: {address}")
             await self.show_controls()
             
         except Exception as e:
-            self.status_label.update(f"Erro: {e}")
+            import traceback
+            traceback.print_exc() # Print to console/log just in case
+            self.status_label.update(f"Erro Fatal: {e}")
             self.main_container.remove_children()
             self.main_container.mount(Label(f"Erro ao conectar: {e}"))
+            self.main_container.mount(Label("Verifique se o dispositivo é compatível (Magic Home/Flux LED)."))
             self.main_container.mount(Button("Tentar Novamente", id="retry"))
 
     async def show_controls(self):
