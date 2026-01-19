@@ -4,12 +4,21 @@ import sys
 import tty
 import termios
 import json
-import colorsys
 import os
 import subprocess
 import threading
 from bleak import BleakScanner
 from led_ble import LEDBLE
+
+# Cores para o terminal
+class Colors:
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    BLUE = '\033[94m'
+    YELLOW = '\033[93m'
+    CYAN = '\033[96m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
 
 # Determinar o diretório onde o script está localizado
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +27,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.environ.get("XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config"))
 APP_CONFIG_DIR = os.path.join(CONFIG_DIR, "controlador-led")
 os.makedirs(APP_CONFIG_DIR, exist_ok=True)
-SHORTCUTS_FILE = os.path.join(APP_CONFIG_DIR, "atalhos_led.json")
+SHORTCUTS_FILE = os.path.join(APP_CONFIG_DIR, "atalhos_led_rgb.json")
 
 class Getch:
     """Captura uma tecla por vez (Linux/Mac)."""
@@ -39,9 +48,10 @@ class LEDController:
         self.address = address
         self.led = None
         self.shortcuts = self.load_shortcuts()
-        self.hue = 0.0
-        self.saturation = 1.0
-        self.brightness = 1.0  # 0.0 a 1.0 (para cálculo local)
+        # Estado RGB (0-255)
+        self.r = 255
+        self.g = 255
+        self.b = 255
 
     def load_shortcuts(self):
         if os.path.exists(SHORTCUTS_FILE):
@@ -59,49 +69,50 @@ class LEDController:
 
     async def connect(self):
         print(f"Conectando a {self.address}...")
-        # LEDBLE requer um BLEDevice, então escaneamos para obtê-lo
         device = await BleakScanner.find_device_by_address(self.address)
         if not device:
             raise Exception(f"Dispositivo {self.address} não encontrado.")
         
         self.led = LEDBLE(device)
         
-        # Tratamento de erro robusto para dispositivos fora do padrão (IndexError)
         try:
             await self.led.update()
             await self.led.turn_on()
         except IndexError:
-             print("\rAviso: Resposta incompleta do LED (IndexError). Tentando continuar...")
+             print("\rAviso: Resposta incompleta do LED (IndexError). Ignorando...")
         except Exception as e:
              print(f"\rAviso ao conectar: {e}")
 
-        # Sincronizar estado local se possível
+        # Sincronizar estado local
         if self.led.rgb:
-            r, g, b = self.led.rgb
-            h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
-            self.hue = h
-            self.saturation = s
-            # A biblioteca retorna brilho separado às vezes, mas vamos usar V do HSV
-            self.brightness = max(v, 0.1) # Evitar 0 absoluto para não perder a cor ao aumentar
+            self.r, self.g, self.b = self.led.rgb
         
-        print("Conectado! Ligando LED...")
+        print(f"{Colors.GREEN}Conectado!{Colors.ENDC} Ligando LED...")
         
-        print("\n=== CONTROLE ASCII ===")
-        print("A/D: Mudar Cor (Hue)")
-        print("W/S: Mudar Brilho")
-        print("Teclas 1-9: Carregar atalho")
-        print("x depois numero: Salvar atalho no slot")
-        print("Q ou ESC: Sair")
-        print("======================")
+        print(f"\n{Colors.BOLD}=== CONTROLE RGB SEMÂNTICO ==={Colors.ENDC}")
+        print(f"{Colors.RED}R / F{Colors.ENDC}: Vermelho +/-")
+        print(f"{Colors.GREEN}G / V{Colors.ENDC}: Verde    +/-")
+        print(f"{Colors.BLUE}B / N{Colors.ENDC}: Azul     +/-")
+        print(f"{Colors.BOLD}1-9{Colors.ENDC}: Carregar atalho")
+        print(f"{Colors.YELLOW}X{Colors.ENDC} depois numero: Salvar atalho")
+        print(f"{Colors.BOLD}Q / ESC{Colors.ENDC}: Sair")
+        print("===========================")
 
     async def set_color(self):
-        r, g, b = colorsys.hsv_to_rgb(self.hue, self.saturation, self.brightness)
-        rgb = (int(r * 255), int(g * 255), int(b * 255))
-        print(f"\rH:{self.hue:.2f} S:{self.saturation:.2f} V:{self.brightness:.2f} (RGB: {rgb})   ", end="", flush=True)
+        # Garantir limites
+        self.r = max(0, min(255, self.r))
+        self.g = max(0, min(255, self.g))
+        self.b = max(0, min(255, self.b))
+        
+        rgb = (self.r, self.g, self.b)
+        
+        # UI colorida
+        print(f"\rRGB: ({Colors.RED}{self.r:3}{Colors.ENDC}, {Colors.GREEN}{self.g:3}{Colors.ENDC}, {Colors.BLUE}{self.b:3}{Colors.ENDC})      ", end="", flush=True)
+        
         try:
             await self.led.set_rgb(rgb)
-        except Exception as e:
-            pass # Ignorar erros de envio rápido
+        except Exception:
+            pass
 
     async def run(self):
         await self.connect()
@@ -109,32 +120,36 @@ class LEDController:
         loop = asyncio.get_running_loop()
 
         running = True
+        step = 15 # Passo do ajuste RGB
+
         while running:
-            # Executar getch em thread separada para não bloquear o loop asyncio
             key = await loop.run_in_executor(None, getch)
 
-            if key == '\x03' or key == 'q' or key == '\x1b': # Ctrl+C, q, Esc (sozinho)
-                if key == '\x1b': 
-                    # Verificar se é escape sequence ou tecla ESC mesmo
-                    # Como getch lê 3 chars para setas, se vier só 1 é ESC
-                    running = False 
-                else:
-                    running = False
+            if key in ('\x03', 'q', '\x1b'): # Ctrl+C, q, Esc
+                running = False
 
-            elif key == 'w': # Cima
-                self.brightness = min(1.0, self.brightness + 0.05)
+            # Vermelho (R/F)
+            elif key == 'r':
+                self.r += step
+                await self.set_color()
+            elif key == 'f':
+                self.r -= step
                 await self.set_color()
 
-            elif key == 's': # Baixo
-                self.brightness = max(0.0, self.brightness - 0.05)
+            # Verde (G/V)
+            elif key == 'g':
+                self.g += step
+                await self.set_color()
+            elif key == 'v':
+                self.g -= step
                 await self.set_color()
 
-            elif key == 'd': # Direita
-                self.hue = (self.hue + 0.05) % 1.0
+            # Azul (B/N)
+            elif key == 'b':
+                self.b += step
                 await self.set_color()
-
-            elif key == 'a': # Esquerda
-                self.hue = (self.hue - 0.05) % 1.0
+            elif key == 'n':
+                self.b -= step
                 await self.set_color()
             
             # Atalhos (1-9)
@@ -142,9 +157,9 @@ class LEDController:
                 slot = key
                 if slot in self.shortcuts:
                     data = self.shortcuts[slot]
-                    self.hue = data['h']
-                    self.saturation = data['s']
-                    self.brightness = data['v']
+                    self.r = data['r']
+                    self.g = data['g']
+                    self.b = data['b']
                     print(f"\rCarregado slot {slot}      ", end="")
                     await self.set_color()
                 else:
@@ -152,35 +167,32 @@ class LEDController:
 
             # Salvar
             elif key == 'x':
-                print("\rPressione 1-9 para salvar... ", end="")
+                print(f"\r{Colors.YELLOW}Pressione 1-9 para salvar... {Colors.ENDC}", end="")
                 next_key = await loop.run_in_executor(None, getch)
                 if next_key.isdigit() and next_key != '0':
                     self.shortcuts[next_key] = {
-                        'h': self.hue,
-                        's': self.saturation,
-                        'v': self.brightness
+                        'r': self.r,
+                        'g': self.g,
+                        'b': self.b
                     }
                     self.save_shortcuts()
                 else:
                     print("\rCancelado.                 ")
 
-        await self.led.stop()
+        if self.led:
+            await self.led.stop()
         print("\nDesconectado.")
 
 async def scan():
-    print("Escaneando dispositivos BLE...")
+    print(f"{Colors.CYAN}Escaneando dispositivos BLE...{Colors.ENDC}")
     devices = await BleakScanner.discover()
-    led_devices = []
-    for d in devices:
-        if d.name and d.name != "Unknown":
-            led_devices.append(d)
+    led_devices = [d for d in devices if d.name and d.name != "Unknown"]
     
     if not led_devices:
-        print("Nenhum dispositivo com nome encontrado. Mostrando todos:")
         led_devices = devices
 
     if len(led_devices) == 1:
-        print(f"Dispositivo único encontrado: {led_devices[0].name} ({led_devices[0].address})")
+        print(f"Dispositivo único encontrado: {Colors.BOLD}{led_devices[0].name}{Colors.ENDC} ({led_devices[0].address})")
         return led_devices[0].address
 
     for i, dev in enumerate(led_devices):
@@ -196,47 +208,22 @@ async def scan():
         return None
 
 def check_update():
-    """Checks for updates in background."""
     try:
         if not os.path.exists(os.path.join(SCRIPT_DIR, ".git")):
             return
-
-        subprocess.run(
-            ["git", "fetch"],
-            cwd=SCRIPT_DIR,
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        
-        result = subprocess.run(
-            ["git", "status", "-uno"],
-            cwd=SCRIPT_DIR,
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        
+        subprocess.run(["git", "fetch"], cwd=SCRIPT_DIR, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        result = subprocess.run(["git", "status", "-uno"], cwd=SCRIPT_DIR, check=True, capture_output=True, text=True)
         if "behind" in result.stdout:
-            print("\n\033[93mAviso: Nova versão disponível! Execute ./update.sh\033[0m")
-            
+            print(f"\n{Colors.YELLOW}Aviso: Nova versão disponível! Execute ./update.sh{Colors.ENDC}")
     except Exception:
         pass
 
 async def main():
-    # Iniciar check de update em thread para não bloquear
     threading.Thread(target=check_update, daemon=True).start()
-
-    address = None
-    if len(sys.argv) > 1:
-        address = sys.argv[1]
-    else:
-        address = await scan()
-    
+    address = sys.argv[1] if len(sys.argv) > 1 else await scan()
     if not address:
-        print("Endereço não fornecido ou inválido.")
+        print("Endereço inválido.")
         return
-
     controller = LEDController(address)
     await controller.run()
 
@@ -246,6 +233,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         print(f"Erro: {e}")
