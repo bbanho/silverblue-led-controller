@@ -87,10 +87,10 @@ class LEDController:
         print("Conectado! Ligando LED...")
         
         print("\n=== CONTROLE ASCII ===")
-        print("Setas E/D: Mudar Cor (Hue)")
-        print("Setas C/B: Mudar Brilho")
+        print("A/D: Mudar Cor (Hue)")
+        print("W/S: Mudar Brilho")
         print("Teclas 1-9: Carregar atalho")
-        print("s depois numero: Salvar atalho no slot")
+        print("x depois numero: Salvar atalho no slot")
         print("Q ou ESC: Sair")
         print("======================")
 
@@ -121,19 +121,19 @@ class LEDController:
                 else:
                     running = False
 
-            elif key == '\x1b[A': # Cima
+            elif key == 'w': # Cima
                 self.brightness = min(1.0, self.brightness + 0.05)
                 await self.set_color()
 
-            elif key == '\x1b[B': # Baixo
+            elif key == 's': # Baixo
                 self.brightness = max(0.0, self.brightness - 0.05)
                 await self.set_color()
 
-            elif key == '\x1b[C': # Direita
+            elif key == 'd': # Direita
                 self.hue = (self.hue + 0.02) % 1.0
                 await self.set_color()
 
-            elif key == '\x1b[D': # Esquerda
+            elif key == 'a': # Esquerda
                 self.hue = (self.hue - 0.02) % 1.0
                 await self.set_color()
             
@@ -151,7 +151,7 @@ class LEDController:
                     print(f"\rSlot {slot} vazio          ", end="")
 
             # Salvar
-            elif key == 's':
+            elif key == 'x':
                 print("\rPressione 1-9 para salvar... ", end="")
                 next_key = await loop.run_in_executor(None, getch)
                 if next_key.isdigit() and next_key != '0':
