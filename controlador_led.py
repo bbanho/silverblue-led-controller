@@ -28,7 +28,8 @@ class ColorBar(Static):
     
     class Changed(Message):
         """Mensagem enviada quando o valor muda via mouse."""
-        def __init__(self, value: float):
+        def __init__(self, bar_id: str, value: float):
+            self.bar_id = bar_id
             self.value = value
             super().__init__()
 
@@ -67,7 +68,7 @@ class ColorBar(Static):
             new_val = max(0.0, min(1.0, rel_x / total_width))
             if new_val != self.value:
                 self.value = new_val
-                self.post_message(self.Changed(new_val))
+                self.post_message(self.Changed(self.id, new_val))
 
 class LEDControllerApp(App):
     CSS = """
@@ -213,9 +214,9 @@ class LEDControllerApp(App):
 
     def on_color_bar_changed(self, message: ColorBar.Changed):
         """Captura mudanças vindo do clique/arraste do mouse."""
-        if message.control.id == "bar_hue": self.hue = message.value
-        elif message.control.id == "bar_sat": self.sat = message.value
-        elif message.control.id == "bar_val": self.val = message.value
+        if message.bar_id == "bar_hue": self.hue = message.value
+        elif message.bar_id == "bar_sat": self.sat = message.value
+        elif message.bar_id == "bar_val": self.val = message.value
         self.update_visuals()
 
     def update_visuals(self):
