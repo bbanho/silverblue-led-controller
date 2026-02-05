@@ -4,28 +4,64 @@ set -e
 # Cores
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}🔧 Instalando Dependências do Controlador LED (Audio Sync)...${NC}"
+INSTALL_DIR="$HOME/.local/share/silverblue-led-controller"
+DESKTOP_DIR="$HOME/.local/share/applications"
 
-# Verificar se está em um venv
-if [[ "$VIRTUAL_ENV" == "" ]]; then
-    echo -e "${BLUE}Criando ambiente virtual...${NC}"
+echo -e "${BLUE}🔧 Instalando Controlador LED (Vibe Engine)...${NC}"
+
+# 1. Setup Venv
+echo -e "${BLUE}📦 Configurando Python Venv...${NC}"
+if [ ! -d ".venv" ]; then
     python3 -m venv .venv
-    source .venv/bin/activate
-else
-    echo -e "${GREEN}Ambiente virtual detectado.${NC}"
 fi
+source .venv/bin/activate
 
-# Instalar libs
-echo -e "${BLUE}Instalando pacotes Python (bleak, textual, numpy, sounddevice)...${NC}"
 pip install --upgrade pip
 pip install -r requirements.txt
-pip install numpy sounddevice
 
-# Permissões Bluetooth (se necessário)
-# echo -e "${BLUE}Verificando permissões...${NC}"
-# sudo setcap 'cap_net_raw,cap_net_admin+eip' $(readlink -f $(which python3))
+# 2. Verificar Dependências de Sistema (PortAudio)
+echo -e "${BLUE}🔍 Verificando dependências de sistema...${NC}"
+if ! ldconfig -p | grep -q libportaudio; then
+    echo -e "${YELLOW}⚠️  Aviso: 'libportaudio' não encontrado.${NC}"
+    echo "O 'sounddevice' precisa dele. Se falhar, instale no host:"
+    echo "  rpm-ostree install portaudio"
+    echo "Ou use dentro de um toolbox."
+fi
+
+# 3. Criar Atalhos Desktop
+echo -e "${BLUE}📝 Criando atalhos no Menu de Aplicativos...${NC}"
+mkdir -p "$DESKTOP_DIR"
+
+# Atalho Audio Sync
+cat > "$DESKTOP_DIR/led-audio-sync.desktop" <<EOF
+[Desktop Entry]
+Name=LED Audio Sync (Vibe Engine)
+Comment=Sincroniza luzes com a música (Chill/Party/Rage)
+Exec=$(pwd)/run_audio_sync.sh
+Icon=audio-speakers
+Terminal=true
+Type=Application
+Categories=Utility;AudioVideo;
+EOF
+
+# Atalho Screen Sync
+cat > "$DESKTOP_DIR/led-screen-sync.desktop" <<EOF
+[Desktop Entry]
+Name=LED Ambilight (Screen)
+Comment=Sincroniza luzes com a tela (Requer Toolbox)
+Exec=$(pwd)/run_screen_sync.sh
+Icon=video-display
+Terminal=true
+Type=Application
+Categories=Utility;Video;
+EOF
+
+# Atualizar banco de dados desktop
+update-desktop-database "$DESKTOP_DIR" || true
 
 echo -e "${GREEN}✅ Instalação Concluída!${NC}"
-echo -e "Para rodar o sync de áudio, use: ${GREEN}./run_audio_sync.sh${NC}"
+echo -e "Use os ícones 'LED Audio Sync' e 'LED Ambilight' no menu ou rode:"
+echo -e "  ${GREEN}./run_audio_sync.sh${NC}"

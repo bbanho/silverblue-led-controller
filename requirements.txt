@@ -10,3 +10,6 @@ uart-devices==0.1.1
 usb-devices==0.4.5
 webcolors==25.10.0
 textual>=1.0.0
+numpy>=1.26.0
+sounddevice>=0.4.6
+Pillow>=10.0.0
