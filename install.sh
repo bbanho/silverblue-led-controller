@@ -1,57 +1,31 @@
 #!/bin/bash
 set -e
 
-# Verificação de segurança: Não rodar como root
-if [ "$EUID" -eq 0 ]; then
-  echo "Erro: Este script não deve ser executado como root (sudo)."
-  echo "Ele instala arquivos no diretório do usuário atual."
-  exit 1
+# Cores
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}🔧 Instalando Dependências do Controlador LED (Audio Sync)...${NC}"
+
+# Verificar se está em um venv
+if [[ "$VIRTUAL_ENV" == "" ]]; then
+    echo -e "${BLUE}Criando ambiente virtual...${NC}"
+    python3 -m venv .venv
+    source .venv/bin/activate
+else
+    echo -e "${GREEN}Ambiente virtual detectado.${NC}"
 fi
 
-INSTALL_DIR="$HOME/.script"
-DESKTOP_FILE="controlador_led.desktop"
-DESKTOP_PATH="$HOME/.local/share/applications/$DESKTOP_FILE"
+# Instalar libs
+echo -e "${BLUE}Instalando pacotes Python (bleak, textual, numpy, sounddevice)...${NC}"
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install numpy sounddevice
 
-echo "=== Instalador Controlador LED (Fedora Silverblue Friendly) ==="
+# Permissões Bluetooth (se necessário)
+# echo -e "${BLUE}Verificando permissões...${NC}"
+# sudo setcap 'cap_net_raw,cap_net_admin+eip' $(readlink -f $(which python3))
 
-# 1. Garantir que o diretório existe (se rodando de outro lugar)
-if [ "$(pwd)" != "$INSTALL_DIR" ]; then
-    echo "Sincronizando arquivos para $INSTALL_DIR..."
-    mkdir -p "$INSTALL_DIR"
-    # Usar rsync para sincronizar. É mais eficiente e evita erros de permissão 
-    # ao tentar sobrescrever arquivos que já existem e estão com permissões restritas.
-    # Excluímos as pastas do venv (bin, lib, etc) para não dar conflito.
-    rsync -av --exclude='bin' --exclude='lib' --exclude='lib64' --exclude='include' --exclude='share' --exclude='pyvenv.cfg' . "$INSTALL_DIR/"
-    cd "$INSTALL_DIR"
-fi
-
-# 2. Configurar Python Virtual Environment
-if [ ! -d "bin" ]; then
-    echo "Criando ambiente virtual..."
-    python3 -m venv .
-fi
-
-# 3. Instalar Dependências
-echo "Instalando dependências..."
-./bin/pip install --upgrade pip
-./bin/pip install -r requirements.txt
-
-# 4. Permissões
-echo "Ajustando permissões..."
-chmod +x controlador_led.py run_led.sh update.sh
-
-# 5. Instalar Desktop Entry
-echo "Instalando atalho no menu..."
-mkdir -p "$HOME/.local/share/applications"
-
-# Copiar e ajustar o caminho do executável no arquivo .desktop
-cp "$DESKTOP_FILE" "$DESKTOP_PATH"
-# Substituir a linha Exec=... pelo caminho correto dinâmico
-sed -i "s|Exec=.*|Exec=$INSTALL_DIR/run_led.sh|" "$DESKTOP_PATH"
-
-# Atualizar banco de dados de desktop entries
-update-desktop-database "$HOME/.local/share/applications" || true
-
-echo "=== Instalação Concluída! ==="
-echo "Você pode rodar pelo terminal: $INSTALL_DIR/run_led.sh"
-echo "Ou procurar por 'Controlador LED' no menu de aplicativos."
+echo -e "${GREEN}✅ Instalação Concluída!${NC}"
+echo -e "Para rodar o sync de áudio, use: ${GREEN}./run_audio_sync.sh${NC}"
