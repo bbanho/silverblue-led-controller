@@ -37,7 +37,6 @@ class AudioReactive:
         self.target_brightness = 0.0
         self.current_hue = 0.0
         self.target_hue = 0.0
-        self.current_sat = 1.0 # Saturação dinâmica
         self.current_palette_idx = 0
         self.palette_timer = time.time()
         self.palette_duration = 60.0
@@ -56,8 +55,7 @@ class AudioReactive:
         self.energy_history = [0.0] * 10
         self.dynamic_smoothing = 0.2
         self.red_channel = 0.0
-        self.is_kicking = False
-        self.target_sat = 1.0 # Alvo de saturação
+        self.is_kicking = False # Flag para saber se estamos no kick
 
     async def connect(self):
         print(f"🔍 Conectando a {DEVICE_ADDRESS}...")
@@ -112,30 +110,19 @@ class AudioReactive:
             target_bri = 0.0
             self.red_channel = 0.0
             self.is_kicking = False
-            self.target_sat = 1.0
         else:
             if bass_ratio < 0.5:
                 target_bri = 0.1 
                 self.red_channel = 0.0
                 self.is_kicking = False
-                self.target_sat = 1.0
             else:
                 norm = (bass_ratio - 0.5) / 2.0 
                 target_bri = 0.1 + (np.clip(norm, 0, 1.0) ** 2.0 * 0.9)
                 
-                # Saturação Pastel: Inverso do Kick
-                # Kick forte -> Saturação 0.3 (Pastel/Branco)
-                # Kick fraco -> Saturação 1.0 (Cor Pura)
-                sat_drop = np.clip(norm * 0.7, 0.0, 0.7)
-                self.target_sat = 1.0 - sat_drop
-                
-                # Injeção de vermelho no kick (opcional, se quisermos manter o "soco")
-                # Mas o efeito pastel já branqueia, o que inclui vermelho.
-                # Vamos manter o canal vermelho auxiliar para "tintar" o pastel de rosa/quente se necessário
                 if target_bri > 0.4:
-                    self.red_channel = (target_bri - 0.4) * 1.5 
+                    self.red_channel = (target_bri - 0.4) * 2.0 
                     self.red_channel = np.clip(self.red_channel, 0.0, 1.0)
-                    self.is_kicking = True
+                    self.is_kicking = True # Kick Ativo!
                 else:
                     self.red_channel = 0.0
                     self.is_kicking = False
@@ -162,13 +149,12 @@ class AudioReactive:
             print(f"\n🎨 Nova Paleta: {self.current_palette_idx}")
 
         bar = '█' * int(self.target_brightness * 40)
-        print(f"Bass:{bass_energy:5.0f} Bri:{self.target_brightness:4.2f} Sat:{self.target_sat:4.2f} |{bar:<40}|", end='\r')
+        print(f"Bass:{bass_energy:5.0f} Bri:{self.target_brightness:4.2f} Red:{self.red_channel:4.2f} |{bar:<40}|", end='\r')
 
     async def led_control_loop(self):
-        print("💡 Loop Pastel (Grave = Branco) iniciado...")
+        print("💡 Loop Separação (Branco != Vermelho) iniciado...")
         while self.running:
             if self.led:
-                # Brilho
                 if self.target_brightness > 0.95:
                     self.current_brightness = self.target_brightness 
                 else:
@@ -176,28 +162,22 @@ class AudioReactive:
                     self.current_brightness = (self.current_brightness * (1-smoothing)) + \
                                             (self.target_brightness * smoothing)
                 
-                # Cor
                 diff = self.target_hue - self.current_hue
                 if diff > 0.5: diff -= 1.0
                 elif diff < -0.5: diff += 1.0
                 self.current_hue = (self.current_hue + (diff * SMOOTHING_HUE)) % 1.0
-                
-                # Saturação (Suavizada)
-                self.current_sat = (self.current_sat * 0.8) + (self.target_sat * 0.2)
 
-                r_base, g_base, b_base = colorsys.hsv_to_rgb(self.current_hue, self.current_sat, self.current_brightness)
+                r_base, g_base, b_base = colorsys.hsv_to_rgb(self.current_hue, 1.0, self.current_brightness)
                 
-                # Prioridade Kick Vermelho (Ducking ainda útil para tintar o pastel?)
-                # Se estamos em modo pastel, o vermelho vai "sujar" o pastel de rosa.
-                # Vamos deixar a saturação cuidar disso. Se o grave for muito forte, a saturação cai e o vermelho sobe.
-                
-                ducking_factor = 1.0 - (self.red_channel * 0.5)
+                # Ducking do Kick
+                ducking_factor = 1.0 - (self.red_channel * 0.8)
                 r_final = r_base * ducking_factor + (self.red_channel * self.current_brightness)
                 g_final = g_base * ducking_factor
                 b_final = b_base * ducking_factor
                 
-                # Flash Branco
+                # --- Flash Branco (Condicional) ---
                 now = time.time()
+                # Só flash se NÃO estiver kickando (Vermelho)
                 if self.target_brightness > 0.95 and (now - self.last_flash_time) > self.flash_cooldown and not self.is_kicking:
                     r_final, g_final, b_final = 1.0, 1.0, 1.0
                     self.last_flash_time = now

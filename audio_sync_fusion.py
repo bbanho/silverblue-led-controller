@@ -13,9 +13,9 @@ DEVICE_ADDRESS = "C5:50:EB:E3:E5:D0"
 DEVICE_NAME_FILTER = "Triones" 
 AUDIO_DEVICE_ID = None 
 SMOOTHING_BRI = 0.2  
-SMOOTHING_HUE = 0.02
+SMOOTHING_HUE = 0.02 # Cor base lenta e pacífica
 
-# Paletas
+# Paletas (Tríades para o "Tapete Harmônico")
 PALETTES = [
     [0.0, 0.33, 0.66], 
     [0.55, 0.6, 0.65], 
@@ -37,27 +37,18 @@ class AudioReactive:
         self.target_brightness = 0.0
         self.current_hue = 0.0
         self.target_hue = 0.0
-        self.current_sat = 1.0 # Saturação dinâmica
         self.current_palette_idx = 0
         self.palette_timer = time.time()
         self.palette_duration = 60.0
         
-        self.avg_bass_energy = 10.0
+        # Dinâmica
+        self.avg_bass = 5.0
         self.peak_hold = 0.0
         self.peak_decay = 0.05
         self.hue_stack = [] 
         
-        self.last_flash_time = 0
-        self.flash_cooldown = 2.0
-        
-        self.silence_timer = time.time()
-        self.is_silence = False
-        
-        self.energy_history = [0.0] * 10
-        self.dynamic_smoothing = 0.2
-        self.red_channel = 0.0
-        self.is_kicking = False
-        self.target_sat = 1.0 # Alvo de saturação
+        # Injeção de Vermelho (Kick)
+        self.red_injection = 0.0
 
     async def connect(self):
         print(f"🔍 Conectando a {DEVICE_ADDRESS}...")
@@ -89,56 +80,26 @@ class AudioReactive:
         freqs = np.fft.rfftfreq(len(indata), 1/SAMPLE_RATE)
         
         mask_bass = (freqs > 40) & (freqs < 150)
-        mask_harm = (freqs > 200) & (freqs < 3000)
+        mask_mid  = (freqs > 200) & (freqs < 3000)
         
-        bass_energy = np.sum(fft_data[mask_bass]) if np.any(mask_bass) else 0
+        e_bass = np.sum(fft_data[mask_bass]) if np.any(mask_bass) else 0
         
-        self.avg_bass_energy = (self.avg_bass_energy * 0.99) + (bass_energy * 0.01)
-        bass_ratio = bass_energy / max(self.avg_bass_energy, 0.1)
+        # --- 1. Brilho Baseado no Grave (Energia) ---
+        self.avg_bass = (self.avg_bass * 0.99) + (e_bass * 0.01)
+        bass_ratio = e_bass / max(self.avg_bass, 0.1)
         
-        self.energy_history.append(bass_ratio)
-        if len(self.energy_history) > 10: self.energy_history.pop(0)
-        variance = np.var(self.energy_history)
-        self.dynamic_smoothing = 0.6 if variance > 0.1 else 0.1
-
-        if bass_ratio < 0.2:
-            if not self.is_silence and (time.time() - self.silence_timer > 1.0):
-                self.is_silence = True
+        if bass_ratio < 0.5: 
+            target_bri = 0.1 # Floor de 10%
+            self.red_injection = 0.0
         else:
-            self.silence_timer = time.time()
-            self.is_silence = False
-
-        if self.is_silence:
-            target_bri = 0.0
-            self.red_channel = 0.0
-            self.is_kicking = False
-            self.target_sat = 1.0
-        else:
-            if bass_ratio < 0.5:
-                target_bri = 0.1 
-                self.red_channel = 0.0
-                self.is_kicking = False
-                self.target_sat = 1.0
+            norm = (bass_ratio - 0.5) / 2.0 
+            target_bri = 0.1 + (np.clip(norm, 0, 1.0) ** 2.0 * 0.9)
+            
+            # Se o grave for muito forte (>1.5x média), injeta vermelho
+            if bass_ratio > 1.5:
+                self.red_injection = np.clip((bass_ratio - 1.5), 0, 1.0)
             else:
-                norm = (bass_ratio - 0.5) / 2.0 
-                target_bri = 0.1 + (np.clip(norm, 0, 1.0) ** 2.0 * 0.9)
-                
-                # Saturação Pastel: Inverso do Kick
-                # Kick forte -> Saturação 0.3 (Pastel/Branco)
-                # Kick fraco -> Saturação 1.0 (Cor Pura)
-                sat_drop = np.clip(norm * 0.7, 0.0, 0.7)
-                self.target_sat = 1.0 - sat_drop
-                
-                # Injeção de vermelho no kick (opcional, se quisermos manter o "soco")
-                # Mas o efeito pastel já branqueia, o que inclui vermelho.
-                # Vamos manter o canal vermelho auxiliar para "tintar" o pastel de rosa/quente se necessário
-                if target_bri > 0.4:
-                    self.red_channel = (target_bri - 0.4) * 1.5 
-                    self.red_channel = np.clip(self.red_channel, 0.0, 1.0)
-                    self.is_kicking = True
-                else:
-                    self.red_channel = 0.0
-                    self.is_kicking = False
+                self.red_injection = 0.0
 
         if target_bri > self.peak_hold:
             self.peak_hold = target_bri 
@@ -146,65 +107,47 @@ class AudioReactive:
             self.peak_hold = max(self.peak_hold - self.peak_decay, 0)
         self.target_brightness = max(target_bri, self.peak_hold)
 
-        if self.target_brightness > 0.1 and np.any(mask_harm):
-            valid_fft = fft_data[mask_harm]
-            valid_freqs = freqs[mask_harm]
+        # --- 2. Cor Baseada na Harmonia (Paz) ---
+        if self.target_brightness > 0.1 and np.any(mask_mid):
+            valid_fft = fft_data[mask_mid]
+            valid_freqs = freqs[mask_mid]
             centroid = np.sum(valid_freqs * valid_fft) / (np.sum(valid_fft) + 1e-6)
             harmonic_pos = np.clip((centroid - 200) / 2800, 0.0, 1.0)
+            
             raw_hue = self.get_target_color_from_palette(harmonic_pos)
             self.hue_stack.append(raw_hue)
             if len(self.hue_stack) > 20: self.hue_stack.pop(0)
             self.target_hue = sum(self.hue_stack) / len(self.hue_stack)
 
-        if (time.time() - self.palette_timer > self.palette_duration) and self.is_silence:
+        if (time.time() - self.palette_timer > self.palette_duration) and (self.target_brightness < 0.2):
             self.current_palette_idx = (self.current_palette_idx + 1) % len(PALETTES)
             self.palette_timer = time.time()
             print(f"\n🎨 Nova Paleta: {self.current_palette_idx}")
 
         bar = '█' * int(self.target_brightness * 40)
-        print(f"Bass:{bass_energy:5.0f} Bri:{self.target_brightness:4.2f} Sat:{self.target_sat:4.2f} |{bar:<40}|", end='\r')
+        print(f"Bass:{e_bass:5.0f} Bri:{self.target_brightness:4.2f} RedInj:{self.red_injection:4.2f} |{bar:<40}|", end='\r')
 
     async def led_control_loop(self):
-        print("💡 Loop Pastel (Grave = Branco) iniciado...")
+        print("💡 Loop Fusão (Paz + Kick) Restaurado...")
         while self.running:
             if self.led:
                 # Brilho
-                if self.target_brightness > 0.95:
-                    self.current_brightness = self.target_brightness 
-                else:
-                    smoothing = self.dynamic_smoothing
-                    self.current_brightness = (self.current_brightness * (1-smoothing)) + \
-                                            (self.target_brightness * smoothing)
+                self.current_brightness = (self.current_brightness * SMOOTHING_BRI) + \
+                                        (self.target_brightness * (1 - SMOOTHING_BRI))
                 
-                # Cor
+                # Cor Base (Harmônica)
                 diff = self.target_hue - self.current_hue
                 if diff > 0.5: diff -= 1.0
                 elif diff < -0.5: diff += 1.0
                 self.current_hue = (self.current_hue + (diff * SMOOTHING_HUE)) % 1.0
-                
-                # Saturação (Suavizada)
-                self.current_sat = (self.current_sat * 0.8) + (self.target_sat * 0.2)
 
-                r_base, g_base, b_base = colorsys.hsv_to_rgb(self.current_hue, self.current_sat, self.current_brightness)
+                # Converter Hue Base para RGB
+                r_base, g_base, b_base = colorsys.hsv_to_rgb(self.current_hue, 1.0, self.current_brightness)
                 
-                # Prioridade Kick Vermelho (Ducking ainda útil para tintar o pastel?)
-                # Se estamos em modo pastel, o vermelho vai "sujar" o pastel de rosa.
-                # Vamos deixar a saturação cuidar disso. Se o grave for muito forte, a saturação cai e o vermelho sobe.
-                
-                ducking_factor = 1.0 - (self.red_channel * 0.5)
-                r_final = r_base * ducking_factor + (self.red_channel * self.current_brightness)
-                g_final = g_base * ducking_factor
-                b_final = b_base * ducking_factor
-                
-                # Flash Branco
-                now = time.time()
-                if self.target_brightness > 0.95 and (now - self.last_flash_time) > self.flash_cooldown and not self.is_kicking:
-                    r_final, g_final, b_final = 1.0, 1.0, 1.0
-                    self.last_flash_time = now
-
-                r_final = min(1.0, r_final)
-                g_final = min(1.0, g_final)
-                b_final = min(1.0, b_final)
+                # --- Mesclagem com Injeção de Vermelho ---
+                r_final = min(1.0, r_base + (self.red_injection * 0.8))
+                g_final = g_base 
+                b_final = b_base 
 
                 if self.current_brightness < 0.02:
                     r_final, g_final, b_final = 0, 0, 0
