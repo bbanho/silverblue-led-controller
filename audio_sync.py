@@ -12,72 +12,102 @@ from led_ble import LEDBLE
 DEVICE_ADDRESS = "C5:50:EB:E3:E5:D0" 
 DEVICE_NAME_FILTER = "Triones" 
 AUDIO_DEVICE_ID = None 
-SMOOTHING_BRI = 0.2  
-SMOOTHING_HUE = 0.02
-
-# Paletas
-PALETTES = [
-    [0.0, 0.33, 0.66], 
-    [0.55, 0.6, 0.65], 
-    [0.0, 0.05, 0.1],  
-    [0.75, 0.8, 0.9],  
-    [0.25, 0.35, 0.4], 
-    [0.1, 0.6, 0.8],   
-]
 
 SAMPLE_RATE = 44100 
 BLOCK_SIZE = 2048
+
+# --- Paletas por Vibe ---
+PALETTES_CHILL = [[0.5, 0.55, 0.6], [0.0, 0.05, 0.1], [0.25, 0.3, 0.35]] # Ocean, Fire, Forest
+PALETTES_PARTY = [[0.8, 0.9, 0.0], [0.4, 0.5, 0.6], [0.1, 0.5, 0.9]]     # Neon, Cyber, Tropical
+PALETTES_RAGE  = [[0.0, 0.02, 0.98], [0.0, 0.0, 0.0]]                    # Red/Dark
+
+class VibeEngine:
+    def __init__(self):
+        self.onsets = []
+        self.spectral_flux = 0.0
+        self.current_vibe = "CHILL"
+        self.last_switch = 0
+    
+    def analyze(self, indata, energy_ratio):
+        # 1. Detecção de Onset (Ataque) simplificada
+        now = time.time()
+        if energy_ratio > 1.5: # Pico significativo
+            # Limpa onsets antigos (> 5s)
+            self.onsets = [t for t in self.onsets if now - t < 5.0]
+            # Adiciona novo se não for duplicado (debounce 0.1s)
+            if not self.onsets or (now - self.onsets[-1] > 0.1):
+                self.onsets.append(now)
+        
+        # 2. Densidade (BPM feeling)
+        density = len(self.onsets) / 5.0 # Ataques por segundo
+        
+        # 3. Decisão (Histerese de 10s para não ficar trocando loucamente)
+        if now - self.last_switch > 10.0:
+            new_vibe = self.current_vibe
+            
+            if density > 4.0: # Muito rápido -> RAGE
+                new_vibe = "RAGE"
+            elif density > 1.0: # Ritmo marcado -> PARTY
+                new_vibe = "PARTY"
+            else: # Calmo -> CHILL
+                new_vibe = "CHILL"
+            
+            if new_vibe != self.current_vibe:
+                print(f"\n🧠 Vibe Shift: {self.current_vibe} -> {new_vibe} (Dens: {density:.1f})")
+                self.current_vibe = new_vibe
+                self.last_switch = now
+        
+        return self.current_vibe
 
 class AudioReactive:
     def __init__(self):
         self.led = None
         self.running = True
+        self.vibe = VibeEngine()
         
+        # Estado
         self.current_brightness = 0.0
         self.target_brightness = 0.0
         self.current_hue = 0.0
         self.target_hue = 0.0
-        self.current_sat = 1.0 # Saturação dinâmica
+        self.current_sat = 1.0
+        self.target_sat = 1.0
+        
         self.current_palette_idx = 0
         self.palette_timer = time.time()
-        self.palette_duration = 60.0
         
-        self.avg_bass_energy = 10.0
+        self.avg_bass = 10.0
         self.peak_hold = 0.0
-        self.peak_decay = 0.05
         self.hue_stack = [] 
         
         self.last_flash_time = 0
-        self.flash_cooldown = 2.0
-        
-        self.silence_timer = time.time()
-        self.is_silence = False
-        
-        self.energy_history = [0.0] * 10
-        self.dynamic_smoothing = 0.2
         self.red_channel = 0.0
         self.is_kicking = False
-        self.target_sat = 1.0 # Alvo de saturação
 
     async def connect(self):
         print(f"🔍 Conectando a {DEVICE_ADDRESS}...")
         try:
             device = await BleakScanner.find_device_by_address(DEVICE_ADDRESS, timeout=5.0)
             if not device:
-                print("❌ Dispositivo não encontrado. Aguardando 20s...")
-                await asyncio.sleep(20)
-                return False
+                await asyncio.sleep(20); return False
             self.led = LEDBLE(device)
             await self.led.update()
             await self.led.turn_on()
             print(f"✅ Conectado: {device.name}")
             return True
         except Exception:
-            await asyncio.sleep(5)
-            return False
+            await asyncio.sleep(5); return False
 
-    def get_target_color_from_palette(self, intensity):
-        palette = PALETTES[self.current_palette_idx]
+    def get_color_from_vibe(self, intensity):
+        # Seleciona paleta baseada na Vibe atual
+        if self.vibe.current_vibe == "RAGE":
+            palettes = PALETTES_RAGE
+        elif self.vibe.current_vibe == "PARTY":
+            palettes = PALETTES_PARTY
+        else:
+            palettes = PALETTES_CHILL
+            
+        palette = palettes[self.current_palette_idx % len(palettes)]
         if intensity < 0.33: return palette[0]
         elif intensity < 0.66: return palette[1]
         else: return palette[2]
@@ -85,134 +115,122 @@ class AudioReactive:
     def audio_callback(self, indata, frames, time_info, status):
         if status: pass
         
+        # FFT e Energia
         fft_data = np.abs(np.fft.rfft(indata[:, 0]))
         freqs = np.fft.rfftfreq(len(indata), 1/SAMPLE_RATE)
         
         mask_bass = (freqs > 40) & (freqs < 150)
-        mask_harm = (freqs > 200) & (freqs < 3000)
+        mask_mid  = (freqs > 200) & (freqs < 3000)
+        e_bass = np.sum(fft_data[mask_bass]) if np.any(mask_bass) else 0
         
-        bass_energy = np.sum(fft_data[mask_bass]) if np.any(mask_bass) else 0
+        self.avg_bass = (self.avg_bass * 0.99) + (e_bass * 0.01)
+        bass_ratio = e_bass / max(self.avg_bass, 0.1)
         
-        self.avg_bass_energy = (self.avg_bass_energy * 0.99) + (bass_energy * 0.01)
-        bass_ratio = bass_energy / max(self.avg_bass_energy, 0.1)
+        # --- VIBE ENGINE ANALYSE ---
+        current_mode = self.vibe.analyze(indata, bass_ratio)
         
-        self.energy_history.append(bass_ratio)
-        if len(self.energy_history) > 10: self.energy_history.pop(0)
-        variance = np.var(self.energy_history)
-        self.dynamic_smoothing = 0.6 if variance > 0.1 else 0.1
+        # Configurar parâmetros baseado no modo
+        if current_mode == "RAGE":
+            smoothing = 0.1 # Rápido
+            flash_enabled = True
+            red_priority = True # Kick Vermelho
+            pastel_mode = False
+        elif current_mode == "PARTY":
+            smoothing = 0.25 # Médio
+            flash_enabled = False # Sem strobe agressivo
+            red_priority = False
+            pastel_mode = True # Cores lavadas no grave
+        else: # CHILL
+            smoothing = 0.5 # Lento
+            flash_enabled = False
+            red_priority = False
+            pastel_mode = False # Cores puras
 
-        if bass_ratio < 0.2:
-            if not self.is_silence and (time.time() - self.silence_timer > 1.0):
-                self.is_silence = True
-        else:
-            self.silence_timer = time.time()
-            self.is_silence = False
-
-        if self.is_silence:
-            target_bri = 0.0
+        # Lógica de Brilho
+        if bass_ratio < 0.5:
+            target_bri = 0.1 
             self.red_channel = 0.0
-            self.is_kicking = False
             self.target_sat = 1.0
         else:
-            if bass_ratio < 0.5:
-                target_bri = 0.1 
-                self.red_channel = 0.0
-                self.is_kicking = False
-                self.target_sat = 1.0
+            norm = (bass_ratio - 0.5) / 2.0 
+            target_bri = 0.1 + (np.clip(norm, 0, 1.0) ** 2.0 * 0.9)
+            
+            # Efeitos por Modo
+            if red_priority and target_bri > 0.4:
+                self.red_channel = (target_bri - 0.4) * 2.0 
             else:
-                norm = (bass_ratio - 0.5) / 2.0 
-                target_bri = 0.1 + (np.clip(norm, 0, 1.0) ** 2.0 * 0.9)
+                self.red_channel = 0.0
                 
-                # Saturação Pastel: Inverso do Kick
-                # Kick forte -> Saturação 0.3 (Pastel/Branco)
-                # Kick fraco -> Saturação 1.0 (Cor Pura)
+            if pastel_mode:
                 sat_drop = np.clip(norm * 0.7, 0.0, 0.7)
                 self.target_sat = 1.0 - sat_drop
-                
-                # Injeção de vermelho no kick (opcional, se quisermos manter o "soco")
-                # Mas o efeito pastel já branqueia, o que inclui vermelho.
-                # Vamos manter o canal vermelho auxiliar para "tintar" o pastel de rosa/quente se necessário
-                if target_bri > 0.4:
-                    self.red_channel = (target_bri - 0.4) * 1.5 
-                    self.red_channel = np.clip(self.red_channel, 0.0, 1.0)
-                    self.is_kicking = True
-                else:
-                    self.red_channel = 0.0
-                    self.is_kicking = False
+            else:
+                self.target_sat = 1.0
 
         if target_bri > self.peak_hold:
             self.peak_hold = target_bri 
         else:
-            self.peak_hold = max(self.peak_hold - self.peak_decay, 0)
+            self.peak_hold = max(self.peak_hold - 0.05, 0)
         self.target_brightness = max(target_bri, self.peak_hold)
 
-        if self.target_brightness > 0.1 and np.any(mask_harm):
-            valid_fft = fft_data[mask_harm]
-            valid_freqs = freqs[mask_harm]
+        # Cor Base
+        if self.target_brightness > 0.1 and np.any(mask_mid):
+            valid_fft = fft_data[mask_mid]
+            valid_freqs = freqs[mask_mid]
             centroid = np.sum(valid_freqs * valid_fft) / (np.sum(valid_fft) + 1e-6)
             harmonic_pos = np.clip((centroid - 200) / 2800, 0.0, 1.0)
-            raw_hue = self.get_target_color_from_palette(harmonic_pos)
+            
+            raw_hue = self.get_color_from_vibe(harmonic_pos)
             self.hue_stack.append(raw_hue)
             if len(self.hue_stack) > 20: self.hue_stack.pop(0)
             self.target_hue = sum(self.hue_stack) / len(self.hue_stack)
 
-        if (time.time() - self.palette_timer > self.palette_duration) and self.is_silence:
-            self.current_palette_idx = (self.current_palette_idx + 1) % len(PALETTES)
+        if (time.time() - self.palette_timer > 60.0) and (self.target_brightness < 0.2):
+            self.current_palette_idx += 1
             self.palette_timer = time.time()
-            print(f"\n🎨 Nova Paleta: {self.current_palette_idx}")
 
+        # Debug
+        vibe_icon = "🔥" if current_mode == "RAGE" else "🎉" if current_mode == "PARTY" else "🧊"
         bar = '█' * int(self.target_brightness * 40)
-        print(f"Bass:{bass_energy:5.0f} Bri:{self.target_brightness:4.2f} Sat:{self.target_sat:4.2f} |{bar:<40}|", end='\r')
+        print(f"{vibe_icon} Bass:{e_bass:5.0f} Bri:{self.target_brightness:4.2f} |{bar:<40}|", end='\r')
 
     async def led_control_loop(self):
-        print("💡 Loop Pastel (Grave = Branco) iniciado...")
+        print("💡 Loop Vibe Engine iniciado...")
         while self.running:
             if self.led:
-                # Brilho
-                if self.target_brightness > 0.95:
-                    self.current_brightness = self.target_brightness 
-                else:
-                    smoothing = self.dynamic_smoothing
-                    self.current_brightness = (self.current_brightness * (1-smoothing)) + \
-                                            (self.target_brightness * smoothing)
+                # Smoothing
+                self.current_brightness = (self.current_brightness * 0.8) + (self.target_brightness * 0.2)
                 
                 # Cor
                 diff = self.target_hue - self.current_hue
                 if diff > 0.5: diff -= 1.0
                 elif diff < -0.5: diff += 1.0
-                self.current_hue = (self.current_hue + (diff * SMOOTHING_HUE)) % 1.0
+                self.current_hue = (self.current_hue + (diff * 0.02)) % 1.0 # Hue sempre suave
                 
-                # Saturação (Suavizada)
                 self.current_sat = (self.current_sat * 0.8) + (self.target_sat * 0.2)
 
-                r_base, g_base, b_base = colorsys.hsv_to_rgb(self.current_hue, self.current_sat, self.current_brightness)
+                r, g, b = colorsys.hsv_to_rgb(self.current_hue, self.current_sat, self.current_brightness)
                 
-                # Prioridade Kick Vermelho (Ducking ainda útil para tintar o pastel?)
-                # Se estamos em modo pastel, o vermelho vai "sujar" o pastel de rosa.
-                # Vamos deixar a saturação cuidar disso. Se o grave for muito forte, a saturação cai e o vermelho sobe.
-                
-                ducking_factor = 1.0 - (self.red_channel * 0.5)
-                r_final = r_base * ducking_factor + (self.red_channel * self.current_brightness)
-                g_final = g_base * ducking_factor
-                b_final = b_base * ducking_factor
-                
-                # Flash Branco
-                now = time.time()
-                if self.target_brightness > 0.95 and (now - self.last_flash_time) > self.flash_cooldown and not self.is_kicking:
-                    r_final, g_final, b_final = 1.0, 1.0, 1.0
-                    self.last_flash_time = now
+                # Prioridade Vermelha (RAGE MODE)
+                if self.vibe.current_vibe == "RAGE":
+                    ducking = 1.0 - (self.red_channel * 0.8)
+                    r = r * ducking + (self.red_channel * self.current_brightness)
+                    g *= ducking
+                    b *= ducking
+                    
+                    # Strobe
+                    now = time.time()
+                    if self.target_brightness > 0.95 and (now - self.last_flash_time) > 2.0:
+                        r, g, b = 1.0, 1.0, 1.0
+                        self.last_flash_time = now
 
-                r_final = min(1.0, r_final)
-                g_final = min(1.0, g_final)
-                b_final = min(1.0, b_final)
-
-                if self.current_brightness < 0.02:
-                    r_final, g_final, b_final = 0, 0, 0
+                # Clip e Envio
+                r, g, b = min(1.0, r), min(1.0, g), min(1.0, b)
+                if self.current_brightness < 0.02: r, g, b = 0, 0, 0
 
                 try:
-                    await self.led.set_rgb((int(r_final*255), int(g_final*255), int(b_final*255)))
-                except Exception:
-                    pass
+                    await self.led.set_rgb((int(r*255), int(g*255), int(b*255)))
+                except Exception: pass
             
             await asyncio.sleep(0.05)
 
